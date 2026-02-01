@@ -88,6 +88,9 @@ class DiscoveryInput(BaseModel):
 class DeleteChatRequest(BaseModel):
     user_id: str
     mentor_id: int
+    
+class DeleteDocsRequest(BaseModel):
+    mentor_id: int
 
 
 # ==========================================
@@ -459,6 +462,15 @@ async def reset_chat_history(req: DeleteChatRequest):
             .execute()
             
         return {"message": "Chat history deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.delete("/educator/reset-docs")
+async def reset_mentor_docs(req: DeleteDocsRequest):
+    try:
+        # Hapus semua dokumen milik mentor ini
+        response = supabase.table("mentor_docs").delete().eq("mentor_id", req.mentor_id).execute()
+        return {"status": "ok", "message": "All documents deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

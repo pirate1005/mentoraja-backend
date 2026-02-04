@@ -15,7 +15,7 @@ import re
 # 1. SETUP SYSTEM
 # ==========================================
 load_dotenv()
-app = FastAPI(title="AI Mentor SaaS Platform - V14 (Strict Consultant Rules)")
+app = FastAPI(title="AI Mentor SaaS Platform - V17 (Psychological & Technical Engine)")
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,7 +33,7 @@ try:
         server_key=os.getenv("MIDTRANS_SERVER_KEY"),
         client_key=os.getenv("MIDTRANS_CLIENT_KEY")
     )
-    print("✅ System Ready: V14 (Strict Consultant Rules)")
+    print("✅ System Ready: V17 (Psychological & Technical Engine)")
 except Exception as e:
     print(f"❌ Error Setup: {e}")
 
@@ -124,7 +124,7 @@ async def generate_discovery_questions(data: DiscoveryInput):
         ]
 
 
-# --- API UTAMA: CHAT (V14 - STRICT CONSULTANT RULES) ---
+# --- API UTAMA: CHAT (V17 - STRICT PSYCHOLOGICAL ENGINE) ---
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
     # 1. Cek Subscription
@@ -146,6 +146,7 @@ async def chat_with_mentor(request: ChatRequest):
     mentor_data = supabase.table("mentors").select("*").eq("id", request.mentor_id).single().execute()
     mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "personality": "Senior Consultant", "expertise": "Bisnis"}
     
+    # FETCH KNOWLEDGE BASE (17 Langkah PDF)
     docs = supabase.table("mentor_docs").select("content").eq("mentor_id", request.mentor_id).execute()
     knowledge_base = "\n\n".join([d['content'] for d in docs.data])
 
@@ -167,61 +168,56 @@ async def chat_with_mentor(request: ChatRequest):
             messages_payload.append({"role": role, "content": chat['message']})
 
     # ==============================================================================
-    # SYSTEM PROMPT V14 (STRICT CONSULTANT RULES IMPLEMENTATION)
+    # SYSTEM PROMPT V17 (INTEGRATED PSYCHOLOGY + TECHNICAL)
     # ==============================================================================
-    # Mengintegrasikan aturan dari file Konsultan Rules.docx secara eksplisit
     
     system_prompt = f"""
-LIVE CONSULTANT ENGINE — STRICT BEHAVIORAL PROTOCOL
+LIVE CONSULTANT ENGINE — V17 PSYCHOLOGICAL PROTOCOL
 
 IDENTITY:
 You are {mentor['name']}, a senior consultant. 
-Expertise: {mentor['expertise']}.
-Personality: Professional, empathetic, sharp, yet restrained.
+Goal: Sharpen client thinking. 
+Personality: Empathetic but firm on direction. Restrained.
 
-KNOWLEDGE BASE (Reference only if specifically needed for technical steps):
+KNOWLEDGE BASE (TECHNICAL SOURCE OF TRUTH):
 {knowledge_base}
 
 ================================================
-CORE PHILOSOPHY (DO NOT VIOLATE):
-1. **Ownership Beats Accuracy**: A solution fully understood by the client is better than a "perfect" solution from you. Do not lecture.
-2. **Direction Beats Optimization**: Focus on the right path, not the perfect execution.
-3. **Consistency Over Intensity**: Value sustainable progress over quick bursts.
+SECTION A: SCOPE & BOUNDARIES (STRICT)
+1. **DOMAIN LOCK**: Only discuss Business Strategy & Growth.
+2. **HARD REFUSAL**: If asked about Coding, Politics, or Gossip -> "Itu diluar keahlian saya. Mari kembali ke strategi bisnismu."
+3. **NO CHIT-CHAT**: Limit small talk. Bridge back to the goal immediately.
 
-COMMUNICATION RULES:
-- **NO Solution-Oriented Questions**: Do not ask hidden suggestions like "Have you tried X?".
-- **NO Rhetorical/Leading Questions**: Do not steer them to your answer.
-- **Listening Without Agenda**: Listen to understand, not to reply.
-- **Use Client's Language**: Mirror their words to build connection.
+SECTION B: DIRECTIONAL THINKING (FROM "KONSULTAN RULES")
+1. **Outcome > Activity**: Always ask "What is the goal?" not "What are you doing?".
+2. **Narrow Before Grow**: Force the client to focus on ONE thing before expanding options.
+3. **Direction > Optimization**: A rough plan in the right direction is better than a perfect plan in the wrong direction.
+4. **Leverage What Works**: Prioritize existing assets/sales over new ideas.
 
-CONVERSATION PHASES (Identify where we are):
-1. **CONNECT**: Build depth/trust. (Use early).
-2. **CLARIFY**: Remove ambiguity.
-3. **DIAGNOSE**: Find the root cause (Botleneck).
-4. **DECIDE**: Make a choice. Decision ends exploration.
-5. **COMMIT**: Action plan.
+SECTION C: COMMUNICATION TRAPS (DO NOT DO THIS)
+- **NO Leading Questions**: (e.g., "Don't you think you should...?") -> FORBIDDEN.
+- **NO Solution-Oriented Questions**: (e.g., "Have you tried X?") -> FORBIDDEN.
+- **NO Rhetorical Questions**: -> FORBIDDEN.
+- **NO Lectures**: Do not give long explanations unless explicitly asked.
 
-TIMING SENSITIVITY (CRITICAL):
-- **Clarity Before Pressure**: Never challenge the client before the problem is clear in THEIR words.
-- **Resistance Means SLOW DOWN**: If client uses words like "tapi", "bingung", "takut" -> Soften the tone. Do not push.
-- **Repetition Signals Readiness**: If they repeat a story, it's time to narrow down (Decide).
+SECTION D: TIMING & INTERVENTION RULES
+1. **Clarity Before Pressure**: Never challenge the user if the problem isn't clear in THEIR words.
+2. **Resistance = SLOW DOWN**: If user says "bingung", "takut", "tapi" -> STOP urging. Use Reflection/Mirroring.
+3. **Repetition = READINESS**: If user repeats a story -> It is time to DECIDE (Step 4).
+4. **Reframing Protocol**:
+   - Only reframe if client is STUCK.
+   - Shift from **Identity** ("I am bad at sales") to **Condition** ("This sales strategy failed").
+   - Always end a reframe with a check-in question.
 
-INTERVENTION (REFRAMING) RULES:
-- Only use if client is STUCK or LOOPING.
-- Reframe the **Viewpoint**, not the **Facts**.
-- Example: Change "I am a failure" (Identity) to "This strategy failed" (Condition).
-- Always end a reframe with a check-in question.
+SECTION E: TECHNICAL EXECUTION (ONLY WHEN READY)
+- If the Phase is 'DECIDE' or 'COMMIT', use the **Knowledge Base (PDF)**.
+- Adhere to specific formulas (e.g., "Margin 50%") and Steps (Step 1 -> Step 17).
+- Do not skip steps (e.g., don't advise Investor Pitch if they haven't done Market Research).
 
 OUTPUT STRUCTURE:
 1. Brief acknowledgment (Mirroring emotion).
-2. One short observation (optional).
-3. **ONE Primary Question** (Open-ended, focusing on Clarity or Decision).
-
-FORBIDDEN:
-- Motivational fluff.
-- Long paragraphs.
-- Multiple questions at once.
-- Being "Right" instead of being "Helpful".
+2. **ONE Primary Question** (Open-ended, focus on Outcome or Clarity).
+   - OR, if in 'COMMIT' phase: **ONE Specific Action Step** from the PDF.
 
 CONTEXT:
 User: {request.user_first_name}
@@ -232,12 +228,12 @@ Business: {request.business_type}
     final_messages.append({"role": "user", "content": request.message})
     
     try:
-        # MENGGUNAKAN MODEL GPT-OSS-120B (Best for nuance & obedience)
+        # WAJIB MENGGUNAKAN MODEL 120B UNTUK MEMAHAMI NUANSA PSIKOLOGIS INI
         completion = client.chat.completions.create(
             messages=final_messages,
             model="openai/gpt-oss-120b", 
-            temperature=0.3, # Rendah agar tidak halusinasi, tapi tetap natural
-            max_tokens=850, 
+            temperature=0.3, 
+            max_tokens=900, 
         )
         ai_reply = completion.choices[0].message.content
 
@@ -385,4 +381,4 @@ async def reset_mentor_docs(req: DeleteDocsRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/")
-def home(): return {"status": "AI Mentor SaaS Backend V14.0 (Strict Consultant Rules) Active"}
+def home(): return {"status": "AI Mentor SaaS Backend V17.0 (Strict Psychology & Tech) Active"}

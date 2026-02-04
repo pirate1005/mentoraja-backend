@@ -15,7 +15,7 @@ import re
 # 1. SETUP SYSTEM
 # ==========================================
 load_dotenv()
-app = FastAPI(title="AI Mentor SaaS Platform - V12 (Smart Step-by-Step Logic)")
+app = FastAPI(title="AI Mentor SaaS Platform - V14 (Strict Consultant Rules)")
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,7 +33,7 @@ try:
         server_key=os.getenv("MIDTRANS_SERVER_KEY"),
         client_key=os.getenv("MIDTRANS_CLIENT_KEY")
     )
-    print("✅ System Ready: V12 (Smart Step-by-Step Logic)")
+    print("✅ System Ready: V14 (Strict Consultant Rules)")
 except Exception as e:
     print(f"❌ Error Setup: {e}")
 
@@ -124,7 +124,7 @@ async def generate_discovery_questions(data: DiscoveryInput):
         ]
 
 
-# --- API UTAMA: CHAT (V12 - LOGIC FLOW MENTOR) ---
+# --- API UTAMA: CHAT (V14 - STRICT CONSULTANT RULES) ---
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
     # 1. Cek Subscription
@@ -144,7 +144,7 @@ async def chat_with_mentor(request: ChatRequest):
 
     # 3. Data Mentor & Knowledge Base
     mentor_data = supabase.table("mentors").select("*").eq("id", request.mentor_id).single().execute()
-    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "personality": "Profesional", "expertise": "Bisnis"}
+    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "personality": "Senior Consultant", "expertise": "Bisnis"}
     
     docs = supabase.table("mentor_docs").select("content").eq("mentor_id", request.mentor_id).execute()
     knowledge_base = "\n\n".join([d['content'] for d in docs.data])
@@ -154,9 +154,7 @@ async def chat_with_mentor(request: ChatRequest):
         "user_id": request.user_id, "mentor_id": request.mentor_id, "sender": "user", "message": request.message
     }).execute()
 
-    # =========================================================
-    # LOGIC V12: FETCH HISTORY & CONTEXT
-    # =========================================================
+    # 5. Fetch History
     past_chats = supabase.table("chat_history").select("sender, message")\
         .eq("user_id", request.user_id).eq("mentor_id", request.mentor_id)\
         .order("created_at", desc=True).limit(10).execute().data
@@ -168,82 +166,84 @@ async def chat_with_mentor(request: ChatRequest):
         if chat['message'] != request.message: 
             messages_payload.append({"role": role, "content": chat['message']})
 
-    # Cek apakah user memberikan angka (untuk fitur kalkulasi otomatis)
-    has_numbers = bool(re.search(r'\d+', request.message))
+    # ==============================================================================
+    # SYSTEM PROMPT V14 (STRICT CONSULTANT RULES IMPLEMENTATION)
+    # ==============================================================================
+    # Mengintegrasikan aturan dari file Konsultan Rules.docx secara eksplisit
     
-    # ==============================================================================
-    # SYSTEM PROMPT V12 (LOGIC FLOW SESUAI PERMINTAAN VIDEO)
-    # ==============================================================================
     system_prompt = f"""
-ROLE & IDENTITY
-You are {mentor['name']}, a professional business mentor.
-Your personality: {mentor['personality']}.
-Your expertise: {mentor['expertise']}.
+LIVE CONSULTANT ENGINE — STRICT BEHAVIORAL PROTOCOL
 
-CORE INSTRUCTION (THE "LOGIC FLOW")
-You are NOT a generic AI. You are a STRICT executor of the specific "Mentor Knowledge" provided below.
-Your goal is to guide the user STEP-BY-STEP using the frameworks, steps, or formulas found in the Knowledge Base.
+IDENTITY:
+You are {mentor['name']}, a senior consultant. 
+Expertise: {mentor['expertise']}.
+Personality: Professional, empathetic, sharp, yet restrained.
 
-SOURCE OF TRUTH (KNOWLEDGE BASE)
-Only use knowledge from here. If the answer is not here, use general business logic but prioritize this source:
+KNOWLEDGE BASE (Reference only if specifically needed for technical steps):
 {knowledge_base}
 
-========================================================
-HOW TO ANSWER (THE PROCESS)
+================================================
+CORE PHILOSOPHY (DO NOT VIOLATE):
+1. **Ownership Beats Accuracy**: A solution fully understood by the client is better than a "perfect" solution from you. Do not lecture.
+2. **Direction Beats Optimization**: Focus on the right path, not the perfect execution.
+3. **Consistency Over Intensity**: Value sustainable progress over quick bursts.
 
-1. **IDENTIFY STEP/FRAMEWORK**:
-   - Check if the user is at a specific step (e.g., "Langkah 1", "Langkah 4").
-   - If the user is starting, guide them to "Langkah 1" from the KB.
-   - If the user asks a specific question, map it to the relevant Step/Module in the KB.
+COMMUNICATION RULES:
+- **NO Solution-Oriented Questions**: Do not ask hidden suggestions like "Have you tried X?".
+- **NO Rhetorical/Leading Questions**: Do not steer them to your answer.
+- **Listening Without Agenda**: Listen to understand, not to reply.
+- **Use Client's Language**: Mirror their words to build connection.
 
-2. **PERSONALIZATION & CALCULATION (CRITICAL)**:
-   - Do NOT just copy-paste the theory.
-   - You MUST apply the theory to the user's specific business context (if known).
-   - **CALCULATION RULE**: If the KB contains a formula (e.g., "Margin minimal 50%", "HPP + Margin = Harga Jual") AND the user provides numbers (e.g., "HPP saya 10.000"), you MUST calculate the result for them.
-   - Example Output: "Berdasarkan rumus di Langkah 4 (Margin 50%), jika HPP kamu Rp10.000, maka harga jual minimal kamu adalah Rp15.000."
+CONVERSATION PHASES (Identify where we are):
+1. **CONNECT**: Build depth/trust. (Use early).
+2. **CLARIFY**: Remove ambiguity.
+3. **DIAGNOSE**: Find the root cause (Botleneck).
+4. **DECIDE**: Make a choice. Decision ends exploration.
+5. **COMMIT**: Action plan.
 
-3. **MISSING DATA HANDLING**:
-   - If a step requires specific input (e.g., "Harga Supplier") to give a recommendation, but the user hasn't provided it, ASK FOR IT explicitly before giving generic advice.
-   - Example: "Untuk menentukan harga jual (Langkah 4), saya butuh tahu berapa harga dari supplier kamu dulu. Boleh sebutkan angkanya?"
+TIMING SENSITIVITY (CRITICAL):
+- **Clarity Before Pressure**: Never challenge the client before the problem is clear in THEIR words.
+- **Resistance Means SLOW DOWN**: If client uses words like "tapi", "bingung", "takut" -> Soften the tone. Do not push.
+- **Repetition Signals Readiness**: If they repeat a story, it's time to narrow down (Decide).
 
-4. **OUTPUT FORMAT**:
-   - Be direct and actionable.
-   - Use "Saya" (I) and "Kamu" (You).
-   - If explaining a step, format it as:
-     **[Nama Langkah dari KB]**
-     [Penjelasan yang disesuaikan dengan bisnis user]
-     [Perhitungan (jika ada angka)]
-     [Action Item selanjutnya]
+INTERVENTION (REFRAMING) RULES:
+- Only use if client is STUCK or LOOPING.
+- Reframe the **Viewpoint**, not the **Facts**.
+- Example: Change "I am a failure" (Identity) to "This strategy failed" (Condition).
+- Always end a reframe with a check-in question.
 
-5. **EXAMPLE CASE (MENTAL MODEL)**:
-   - Imagine the user is building a "Rice Bowl" business.
-   - If the KB says "Riset Kompetitor", you advise them to check other Rice Bowl brands specifically.
-   - Always try to make the advice relevant to their industry.
+OUTPUT STRUCTURE:
+1. Brief acknowledgment (Mirroring emotion).
+2. One short observation (optional).
+3. **ONE Primary Question** (Open-ended, focusing on Clarity or Decision).
 
-========================================================
-CURRENT CONTEXT
-User Name: {request.user_first_name}
-Business Type (if known): {request.business_type} (e.g. Rice Bowl, Fashion, etc - Infer from conversation)
-User Message: "{request.message}"
+FORBIDDEN:
+- Motivational fluff.
+- Long paragraphs.
+- Multiple questions at once.
+- Being "Right" instead of being "Helpful".
 
-Now, reply as the mentor.
+CONTEXT:
+User: {request.user_first_name}
+Business: {request.business_type}
 """
     
     final_messages = [{"role": "system", "content": system_prompt}] + messages_payload
     final_messages.append({"role": "user", "content": request.message})
     
     try:
+        # MENGGUNAKAN MODEL GPT-OSS-120B (Best for nuance & obedience)
         completion = client.chat.completions.create(
             messages=final_messages,
-            model="llama-3.3-70b-versatile", 
-            temperature=0.3, # Rendah agar patuh pada Knowledge Base
-            max_tokens=4500, 
+            model="openai/gpt-oss-120b", 
+            temperature=0.3, # Rendah agar tidak halusinasi, tapi tetap natural
+            max_tokens=850, 
         )
         ai_reply = completion.choices[0].message.content
 
     except Exception as e:
         print(f"Error AI: {e}")
-        ai_reply = "Maaf, sistem sedang sibuk. Mohon coba lagi."
+        ai_reply = "Hmm. Saya perlu mencerna itu sebentar. Bisa ulangi bagian terakhir dengan kata lain?"
 
     supabase.table("chat_history").insert({
         "user_id": request.user_id, "mentor_id": request.mentor_id, "sender": "ai", "message": ai_reply
@@ -385,4 +385,4 @@ async def reset_mentor_docs(req: DeleteDocsRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/")
-def home(): return {"status": "AI Mentor SaaS Backend V12.0 (Logic Flow Activated) Active"}
+def home(): return {"status": "AI Mentor SaaS Backend V14.0 (Strict Consultant Rules) Active"}

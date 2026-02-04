@@ -1,42 +1,47 @@
 import os
 import json
+import re
+from datetime import datetime, timedelta
+from typing import List, Optional
+
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from supabase import create_client
+from supabase import create_client, Client
 from groq import Groq
-from fastapi.middleware.cors import CORSMiddleware
 import midtransclient
-from datetime import datetime, timedelta
 import pypdf
-import re
 
 # ==========================================
-# 1. SETUP SYSTEM
+# 1. SETUP SYSTEM & CONFIGURATION
 # ==========================================
 load_dotenv()
-app = FastAPI(title="AI Mentor SaaS Platform - V17 (Psychological & Technical Engine)")
+
+app = FastAPI(
+    title="AI Mentor SaaS Platform - V19 (Full Output Engine)",
+    description="Backend AI Mentor dengan fitur Full Output 17 Langkah & High Token Limit."
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 try:
-    supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+    supabase: Client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
     client = Groq(api_key=os.getenv("GROQ_API_KEY"))
     snap = midtransclient.Snap(
         is_production=False, 
         server_key=os.getenv("MIDTRANS_SERVER_KEY"),
         client_key=os.getenv("MIDTRANS_CLIENT_KEY")
     )
-    print("✅ System Ready: V17 (Psychological & Technical Engine)")
+    print("✅ System Ready: V19 (Full Output Engine Active)")
 except Exception as e:
     print(f"❌ Error Setup: {e}")
-
 
 # ==========================================
 # 2. DATA MODELS
@@ -48,10 +53,6 @@ class ChatRequest(BaseModel):
     business_type: str = "Umum"
     user_first_name: str = "Teman" 
     business_snapshot: str = "Belum ada data"
-
-class ChatHistoryRequest(BaseModel):
-    user_id: str
-    mentor_id: int
 
 class PaymentRequest(BaseModel):
     user_id: str
@@ -98,7 +99,11 @@ class DeleteDocsRequest(BaseModel):
 # 3. API ENDPOINTS
 # ==========================================
 
-# --- API AI DISCOVERY ---
+@app.get("/")
+def home():
+    return {"status": "AI Mentor SaaS Backend V19.0 (Full Output) is Running"}
+
+# --- A. API AI DISCOVERY ---
 @app.post("/discovery/generate-questions")
 async def generate_discovery_questions(data: DiscoveryInput):
     try:
@@ -106,7 +111,7 @@ async def generate_discovery_questions(data: DiscoveryInput):
         user_prompt = f"""
         User Goal: "{data.user_goal}".
         Task: Create 3 follow-up multiple choice questions in INDONESIAN.
-        Output JSON: [{{"id": 1, "question": "...", "icon": "emoji", "options": ["A", "B"]}}]
+        Output JSON Format: [{{"id": 1, "question": "...", "icon": "emoji", "options": ["A", "B"]}}]
         """
         chat_completion = client.chat.completions.create(
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
@@ -118,13 +123,13 @@ async def generate_discovery_questions(data: DiscoveryInput):
     except Exception as e:
         print(f"Error Discovery: {e}")
         return [
-            {"id": 1, "question": "Fokus bisnis?", "icon": "🎯", "options": ["Marketing", "Operasional", "Keuangan"]},
-            {"id": 2, "question": "Skala saat ini?", "icon": "📈", "options": ["Ide", "Rintisan", "Stabil"]},
+            {"id": 1, "question": "Fokus bisnis saat ini?", "icon": "🎯", "options": ["Marketing", "Operasional", "Keuangan"]},
+            {"id": 2, "question": "Skala bisnis?", "icon": "📈", "options": ["Ide", "Rintisan", "Stabil"]},
             {"id": 3, "question": "Kendala utama?", "icon": "🚧", "options": ["Modal", "Strategi", "Tim"]}
         ]
 
 
-# --- API UTAMA: CHAT (V17 - STRICT PSYCHOLOGICAL ENGINE) ---
+# --- B. API UTAMA: CHAT (V19 - FULL OUTPUT LOGIC) ---
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
     # 1. Cek Subscription
@@ -142,11 +147,10 @@ async def chat_with_mentor(request: ChatRequest):
     if not is_subscribed and user_chat_count >= 5:
         return {"reply": "LIMIT_REACHED", "mentor": "System", "usage": user_chat_count}
 
-    # 3. Data Mentor & Knowledge Base
+    # 3. Data Mentor & PDF
     mentor_data = supabase.table("mentors").select("*").eq("id", request.mentor_id).single().execute()
     mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "personality": "Senior Consultant", "expertise": "Bisnis"}
     
-    # FETCH KNOWLEDGE BASE (17 Langkah PDF)
     docs = supabase.table("mentor_docs").select("content").eq("mentor_id", request.mentor_id).execute()
     knowledge_base = "\n\n".join([d['content'] for d in docs.data])
 
@@ -168,78 +172,77 @@ async def chat_with_mentor(request: ChatRequest):
             messages_payload.append({"role": role, "content": chat['message']})
 
     # ==============================================================================
-    # SYSTEM PROMPT V17 (INTEGRATED PSYCHOLOGY + TECHNICAL)
+    # SYSTEM PROMPT V19 (FULL OUTPUT & PROACTIVE)
     # ==============================================================================
-    
     system_prompt = f"""
-LIVE CONSULTANT ENGINE — V17 PSYCHOLOGICAL PROTOCOL
+LIVE CONSULTANT ENGINE — V19 FULL OUTPUT PROTOCOL
 
 IDENTITY:
-You are {mentor['name']}, a senior consultant. 
-Goal: Sharpen client thinking. 
-Personality: Empathetic but firm on direction. Restrained.
+You are {mentor['name']}, a senior business consultant.
+Goal: To guide the client through the steps in the Knowledge Base.
 
-KNOWLEDGE BASE (TECHNICAL SOURCE OF TRUTH):
+KNOWLEDGE BASE (SOURCE OF TRUTH - "17 LANGKAH"):
 {knowledge_base}
 
 ================================================
 SECTION A: SCOPE & BOUNDARIES (STRICT)
-1. **DOMAIN LOCK**: Only discuss Business Strategy & Growth.
-2. **HARD REFUSAL**: If asked about Coding, Politics, or Gossip -> "Itu diluar keahlian saya. Mari kembali ke strategi bisnismu."
-3. **NO CHIT-CHAT**: Limit small talk. Bridge back to the goal immediately.
+1. **DOMAIN LOCK**: Only discuss Business, Strategy, Marketing, Sales based on the PDF.
+2. **HARD REFUSAL**: Refuse coding, politics, or gossip politely.
+3. **NO CHIT-CHAT**: Bridge back to the business goal immediately.
 
-SECTION B: DIRECTIONAL THINKING (FROM "KONSULTAN RULES")
-1. **Outcome > Activity**: Always ask "What is the goal?" not "What are you doing?".
-2. **Narrow Before Grow**: Force the client to focus on ONE thing before expanding options.
-3. **Direction > Optimization**: A rough plan in the right direction is better than a perfect plan in the wrong direction.
-4. **Leverage What Works**: Prioritize existing assets/sales over new ideas.
+SECTION B: THE "17 STEPS" COMPLIANCE (FULL OUTPUT MODE)
+1. **NO SUMMARIZATION**: If the user asks for "Langkah-langkahnya" or "Apa saja langkahnya?", **YOU MUST OUTPUT ALL 17 STEPS** from the PDF.
+2. **NO TRUNCATION**: Do not stop at step 5 or 10. Do not ask "Should I continue?". Write them ALL out immediately.
+3. **Format**: List them clearly (Step 1, Step 2, ... Step 17) with a brief 1-sentence explanation for each.
 
-SECTION C: COMMUNICATION TRAPS (DO NOT DO THIS)
-- **NO Leading Questions**: (e.g., "Don't you think you should...?") -> FORBIDDEN.
-- **NO Solution-Oriented Questions**: (e.g., "Have you tried X?") -> FORBIDDEN.
-- **NO Rhetorical Questions**: -> FORBIDDEN.
-- **NO Lectures**: Do not give long explanations unless explicitly asked.
+SECTION C: PROACTIVE "OFFER TO HELP" (THE "DO IT FOR YOU" PROTOCOL)
+After listing the steps (or when discussing a specific step), **Offer to do the work based on the 'Output' section in PDF.**
 
-SECTION D: TIMING & INTERVENTION RULES
-1. **Clarity Before Pressure**: Never challenge the user if the problem isn't clear in THEIR words.
-2. **Resistance = SLOW DOWN**: If user says "bingung", "takut", "tapi" -> STOP urging. Use Reflection/Mirroring.
-3. **Repetition = READINESS**: If user repeats a story -> It is time to DECIDE (Step 4).
-4. **Reframing Protocol**:
-   - Only reframe if client is STUCK.
-   - Shift from **Identity** ("I am bad at sales") to **Condition** ("This sales strategy failed").
-   - Always end a reframe with a check-in question.
+- **Scenario: Calculation (Pricing/Profit/Margin)**
+  - PDF Rule: "Margin min 50%".
+  - YOUR ACTION: Ask "Berapa harga modal (HPP) kamu? Sini saya hitungkan harga jual minimalnya."
+  
+- **Scenario: Research (Competitor/Supplier)**
+  - PDF Rule: "Riset 5-10 kompetitor".
+  - YOUR ACTION: Ask "Kamu jualan apa? Mau saya bantu buatkan daftar poin riset kompetitor?"
+  
+- **Scenario: Content/Copywriting**
+  - PDF Rule: "Rumus copywriting masalah + solusi".
+  - YOUR ACTION: Offer "Mau saya buatkan contoh copywriting untuk produkmu sekarang?"
 
-SECTION E: TECHNICAL EXECUTION (ONLY WHEN READY)
-- If the Phase is 'DECIDE' or 'COMMIT', use the **Knowledge Base (PDF)**.
-- Adhere to specific formulas (e.g., "Margin 50%") and Steps (Step 1 -> Step 17).
-- Do not skip steps (e.g., don't advise Investor Pitch if they haven't done Market Research).
+SECTION D: PSYCHOLOGICAL & TIMING (FROM "KONSULTAN RULES")
+1. **Clarity Before Pressure**: Clarify the problem first.
+2. **Resistance = SLOW DOWN**: If user says "bingung", soften the tone.
 
 OUTPUT STRUCTURE:
-1. Brief acknowledgment (Mirroring emotion).
-2. **ONE Primary Question** (Open-ended, focus on Outcome or Clarity).
-   - OR, if in 'COMMIT' phase: **ONE Specific Action Step** from the PDF.
+1. Brief acknowledgment.
+2. **THE CONTENT**: 
+   - If user asks for the list -> **Provide ALL 17 Steps**.
+   - If user asks about specific problem -> Explain the relevant step.
+3. **THE OFFER**: Explicitly offer to help execute the "Output" (Calculate, Write, or List).
 
 CONTEXT:
-User: {request.user_first_name}
-Business: {request.business_type}
+User Name: {request.user_first_name}
+Business Type: {request.business_type}
+User Message: "{request.message}"
 """
     
     final_messages = [{"role": "system", "content": system_prompt}] + messages_payload
     final_messages.append({"role": "user", "content": request.message})
     
     try:
-        # WAJIB MENGGUNAKAN MODEL 120B UNTUK MEMAHAMI NUANSA PSIKOLOGIS INI
+        # REQUEST KE LLM - MAX TOKENS DINAIKKAN KE 3500 AGAR CUKUP UNTUK 17 LANGKAH
         completion = client.chat.completions.create(
             messages=final_messages,
             model="openai/gpt-oss-120b", 
             temperature=0.3, 
-            max_tokens=900, 
+            max_tokens=3500, # UPDATED: Token diperbesar untuk jawaban panjang
         )
         ai_reply = completion.choices[0].message.content
 
     except Exception as e:
         print(f"Error AI: {e}")
-        ai_reply = "Hmm. Saya perlu mencerna itu sebentar. Bisa ulangi bagian terakhir dengan kata lain?"
+        ai_reply = "Hmm, sepertinya sinyal saya terganggu. Boleh diulang bagian terakhir?"
 
     supabase.table("chat_history").insert({
         "user_id": request.user_id, "mentor_id": request.mentor_id, "sender": "ai", "message": ai_reply
@@ -248,7 +251,7 @@ Business: {request.business_type}
     return {"mentor": mentor['name'], "reply": ai_reply}
 
 
-# --- API LAINNYA (TETAP SAMA) ---
+# --- C. API PENDUKUNG ---
 
 @app.get("/mentors/search")
 async def search_mentors(keyword: str = None):
@@ -269,20 +272,30 @@ async def get_chat_history(user_id: str, mentor_id: int):
 @app.post("/educator/settings")
 async def update_settings(req: MentorSettingsRequest):
     bank = {"bank": req.bank_name, "number": req.bank_number, "name": req.account_holder}
-    supabase.table("mentors").update({"category": req.category, "price_per_month": req.price, "bank_details": bank}).eq("id", req.mentor_id).execute()
+    supabase.table("mentors").update({
+        "category": req.category, 
+        "price_per_month": req.price, 
+        "bank_details": bank
+    }).eq("id", req.mentor_id).execute()
     return {"status": "ok"}
 
 @app.post("/educator/upload")
 async def upload_material(mentor_id: int, file: UploadFile = File(...)):
-    text = "".join([page.extract_text() for page in pypdf.PdfReader(file.file).pages])
-    chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
-    for chunk in chunks:
-        supabase.table("mentor_docs").insert({"mentor_id": mentor_id, "content": chunk}).execute()
-    return {"status": "ok"}
+    try:
+        text = "".join([page.extract_text() for page in pypdf.PdfReader(file.file).pages])
+        chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        for chunk in chunks:
+            supabase.table("mentor_docs").insert({"mentor_id": mentor_id, "content": chunk}).execute()    
+        return {"status": "ok", "chunks_count": len(chunks)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload Error: {str(e)}")
 
 @app.post("/educator/payout")
 async def request_payout(req: PayoutRequestModel):
-    supabase.table("payouts").insert({"mentor_id": req.mentor_id, "amount": req.amount, "status": "pending", "bank_info": req.bank_info, "created_at": "now()"}).execute()
+    supabase.table("payouts").insert({
+        "mentor_id": req.mentor_id, "amount": req.amount, "status": "pending", 
+        "bank_info": req.bank_info, "created_at": "now()"
+    }).execute()
     return {"status": "ok"}
 
 @app.get("/educator/payout/history/{mentor_id}")
@@ -297,15 +310,19 @@ async def dashboard(user_id: str):
         mid = m.data['id']
         tx = supabase.table("subscriptions").select("*").eq("mentor_id", mid).eq("status", "settlement").execute().data or []
         chart = {}
-        for t in tx: chart[t['created_at'][:10]] = chart.get(t['created_at'][:10], 0) + t['net_amount']
+        for t in tx: 
+            date_key = t['created_at'][:10]
+            chart[date_key] = chart.get(date_key, 0) + t['net_amount']
         
         revs = supabase.table("reviews").select("rating").eq("mentor_id", mid).execute().data or []
         avg = sum([r['rating'] for r in revs]) / len(revs) if revs else 0
         ai_qual = int((avg/5)*100) if avg > 0 else 98
 
         return {
-            "gross_revenue": sum(t['amount'] for t in tx), "net_earnings": sum(t['net_amount'] for t in tx),
-            "students": len(set(t['user_id'] for t in tx)), "ai_quality": ai_qual,
+            "gross_revenue": sum(t['amount'] for t in tx), 
+            "net_earnings": sum(t['net_amount'] for t in tx),
+            "students": len(set(t['user_id'] for t in tx)), 
+            "ai_quality": ai_qual,
             "chart_data": [{"name":k,"total":v} for k,v in sorted(chart.items())]
         }
     except: return {"students": 0, "gross_revenue": 0}
@@ -327,27 +344,43 @@ async def admin_update_user(user_id: str, req: AdminUpdateUserRequest):
 async def logs():
     return supabase.table("activity_logs").select("*").order("created_at", desc=True).limit(20).execute().data
 
+@app.delete("/chat/reset")
+async def reset_chat_history(req: DeleteChatRequest):
+    try:
+        supabase.table("chat_history").delete().eq("user_id", req.user_id).eq("mentor_id", req.mentor_id).execute()
+        return {"message": "Chat history deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.delete("/educator/reset-docs")
+async def reset_mentor_docs(req: DeleteDocsRequest):
+    try:
+        supabase.table("mentor_docs").delete().eq("mentor_id", req.mentor_id).execute()
+        return {"status": "ok", "message": "All documents deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/payment/create")
 async def create_payment(req: PaymentRequest):
     fee = req.amount * 0.1
-    oid = f"SUB-{req.user_id[:4]}-{datetime.now().strftime('%d%H%M%S')}"
-    trx = snap.create_transaction({
-        "transaction_details": {"order_id": oid, "gross_amount": req.amount},
+    order_id = f"SUB-{req.user_id[:4]}-{datetime.now().strftime('%d%H%M%S')}"
+    transaction = snap.create_transaction({
+        "transaction_details": {"order_id": order_id, "gross_amount": req.amount},
         "customer_details": {"user_id": req.user_id, "email": req.email, "first_name": req.first_name}
     })
     supabase.table("subscriptions").insert({
-        "user_id": req.user_id, "mentor_id": req.mentor_id, "midtrans_order_id": oid,
+        "user_id": req.user_id, "mentor_id": req.mentor_id, "midtrans_order_id": order_id,
         "amount": req.amount, "net_amount": req.amount-fee, "platform_fee_amount": fee, "status": "pending"
     }).execute()
-    return {"token": trx['token'], "redirect_url": trx['redirect_url']}
+    return {"token": transaction['token'], "redirect_url": transaction['redirect_url']}
 
 @app.post("/midtrans-notification")
 async def midtrans_notification(n: dict):
     try:
-        s = 'pending'
-        if n['transaction_status'] in ['capture', 'settlement']: s = 'settlement'
-        elif n['transaction_status'] in ['cancel', 'deny', 'expire']: s = 'failed'
-        supabase.table("subscriptions").update({"status": s}).eq("midtrans_order_id", n['order_id']).execute()
+        status = 'pending'
+        if n['transaction_status'] in ['capture', 'settlement']: status = 'settlement'
+        elif n['transaction_status'] in ['cancel', 'deny', 'expire']: status = 'failed'
+        supabase.table("subscriptions").update({"status": status}).eq("midtrans_order_id", n['order_id']).execute()
         return {"status": "ok"}
     except: return {"status": "error"}
 
@@ -356,29 +389,3 @@ async def update_profile(user_id: str, full_name: str = None, avatar_url: str = 
     data = {k: v for k, v in {"full_name": full_name, "avatar_url": avatar_url}.items() if v}
     if data: supabase.table("profiles").update(data).eq("id", user_id).execute()
     return {"status": "ok"}
-
-
-@app.delete("/chat/reset")
-async def reset_chat_history(req: DeleteChatRequest):
-    try:
-        # Hapus semua pesan antara user dan mentor ini
-        response = supabase.table("chat_history").delete()\
-            .eq("user_id", req.user_id)\
-            .eq("mentor_id", req.mentor_id)\
-            .execute()
-            
-        return {"message": "Chat history deleted successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
-@app.delete("/educator/reset-docs")
-async def reset_mentor_docs(req: DeleteDocsRequest):
-    try:
-        # Hapus semua dokumen milik mentor ini
-        response = supabase.table("mentor_docs").delete().eq("mentor_id", req.mentor_id).execute()
-        return {"status": "ok", "message": "All documents deleted"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/")
-def home(): return {"status": "AI Mentor SaaS Backend V17.0 (Strict Psychology & Tech) Active"}

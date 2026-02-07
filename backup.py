@@ -21,8 +21,8 @@ import pypdf
 load_dotenv()
 
 app = FastAPI(
-    title="AI Mentor SaaS Platform - V29 (Pro Consultant Logic)",
-    description="Backend AI Mentor V29. Consultant Diagnosis Logic + Formal Address (No 'Teman')."
+    title="AI Mentor SaaS Platform - V23 (Ultimate Strict Logic)",
+    description="Backend AI Mentor V23. Enforcing 'Logic Feb 2026' via Chain-of-Thought Prompting."
 )
 
 app.add_middleware(
@@ -51,7 +51,7 @@ try:
         server_key=os.getenv("MIDTRANS_SERVER_KEY"),
         client_key=os.getenv("MIDTRANS_CLIENT_KEY")
     )
-    print("✅ System Ready: V29 (Pro Consultant Logic)")
+    print("✅ System Ready: V23 (Ultimate Strict Mode)")
 except Exception as e:
     print(f"❌ Error Setup: {e}")
 
@@ -76,7 +76,7 @@ class ChatRequest(BaseModel):
     mentor_id: int
     message: str
     business_type: str = "Umum"
-    user_first_name: str = "" # Hapus default "Teman"
+    user_first_name: str = "Teman" 
     business_snapshot: str = "Belum ada data"
 
 class PaymentRequest(BaseModel):
@@ -125,9 +125,9 @@ class DeleteDocsRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "AI Mentor Backend V29 Active"}
+    return {"status": "AI Mentor Backend V23 Active"}
 
-# --- API CHAT UTAMA (V29 PRO CONSULTANT LOGIC) ---
+# --- API CHAT UTAMA (V23 STRICT LOGIC) ---
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
     # 1. Cek Subscription
@@ -147,11 +147,11 @@ async def chat_with_mentor(request: ChatRequest):
 
     # 3. Data Mentor & KB
     mentor_data = supabase.table("mentors").select("*").eq("id", request.mentor_id).single().execute()
-    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "personality": "Expert Advisor", "expertise": "General", "avatar_url": None}
+    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "personality": "Senior Consultant", "expertise": "Bisnis", "avatar_url": None}
     
     docs = supabase.table("mentor_docs").select("content").eq("mentor_id", request.mentor_id).execute()
+    # Pastikan KB ada isinya, kalau kosong kasih placeholder agar tidak error
     knowledge_base = "\n\n".join([d['content'] for d in docs.data])
-    
     if not knowledge_base:
         knowledge_base = "Guidelines: 1. Ask Problem & Goal. 2. Teach steps sequentially."
 
@@ -160,7 +160,7 @@ async def chat_with_mentor(request: ChatRequest):
         "user_id": request.user_id, "mentor_id": request.mentor_id, "sender": "user", "message": request.message
     }).execute()
 
-    # 5. Fetch History
+    # 5. Fetch History (Untuk Context)
     past_chats = supabase.table("chat_history").select("sender, message")\
         .eq("user_id", request.user_id).eq("mentor_id", request.mentor_id)\
         .order("created_at", desc=True).limit(10).execute().data
@@ -173,52 +173,50 @@ async def chat_with_mentor(request: ChatRequest):
             messages_payload.append({"role": role, "content": chat['message']})
 
     # ==============================================================================
-    # SYSTEM PROMPT V29 (DIAGNOSIS FIRST & NO 'TEMAN')
+    # SYSTEM PROMPT V23 (CHAIN OF THOUGHT & NEGATIVE PROMPTING)
     # ==============================================================================
+    # Kita menggunakan teknik "Role-play Hardening" agar AI tidak keluar jalur.
     
-    user_name_instruction = ""
-    if request.user_first_name:
-        user_name_instruction = f"Address the user as '{request.user_first_name}'. Do NOT use 'Teman'."
-    else:
-        user_name_instruction = "Address the user directly without a nickname. Do NOT use 'Teman' or 'Kawan'."
-
     system_prompt = f"""
-YOU ARE {mentor['name']}, AN EXPERT IN {mentor.get('expertise', 'Fields')}.
-YOUR PERSONALITY IS: {mentor.get('personality', 'Professional Consultant')}.
-
-SOURCE OF TRUTH (KNOWLEDGE BASE):
+YOU ARE NOT A HELPFUL ASSISTANT. YOU ARE A STRICT BUSINESS SIMULATOR PROGRAM.
+YOUR NAME: {mentor['name']}
+YOUR KNOWLEDGE BASE (THE ONLY TRUTH):
 {knowledge_base}
 
-==================================================
-CRITICAL INSTRUCTIONS:
+YOUR STRICT BEHAVIORAL PROTOCOL (DO NOT VIOLATE):
 
-1. ADDRESSING THE USER:
-- {user_name_instruction}
-- Keep the tone professional, encouraging, but strict on the process.
+PHASE 1: THE INITIAL GATE (MANDATORY)
+Check the conversation history.
+- IF user has NOT explicitly stated "1 specific problem" AND "1 specific goal" yet:
+  YOU MUST IGNORE everything else (greetings, introductions, small talk).
+  YOU MUST ASK EXACTLY:
+  "Halo. Sebelum mulai, saya perlu tahu 2 hal wajib:
+   1. Apa 1 masalah spesifik yang mau dibahas?
+   2. Apa goal/hasil yang kamu harapkan?"
+  
+  [cite_start][CRITICAL]: DO NOT ask about "modal", "jenis bisnis", or "pengalaman". ONLY ask the 2 questions above. [cite: 3, 4]
 
-2. SEQUENCE ENFORCEMENT (STEP-LOCKER):
-- You must guide the user step-by-step based on the "Langkah" numbers in the Knowledge Base.
-- Follow the sequence: Langkah 1 -> Langkah 2 -> Langkah 3.
-- DO NOT skip steps.
-- IF user tries to jump ahead, say: "Sabar, pertanyaan itu bagus tapi kita selesaikan langkah ini dulu."
+PHASE 2: THE TEACHING LOOP (SEQUENTIAL)
+- IF (and ONLY IF) user has answered Phase 1:
+  Start teaching the "17 Steps" from the Knowledge Base.
+  [cite_start]TEACH ONE STEP AT A TIME. [cite: 6]
+  
+PHASE 3: THE "DO IT FOR YOU" OFFER
+- At the end of explaining a step, you MUST Offer Execution Help.
+- [cite_start]If the step involves numbers (Pricing, HPP), ask: "Berapa angka kamu? Mau saya hitungkan?" [cite: 14]
+- If the step involves writing (Copywriting, Research), ask: "Mau saya buatkan contohnya?"
+- [cite_start]IF user says "Bantu saya" or gives data: CALCULATE/WRITE IT immediately based on Knowledge Base formulas. [cite: 18]
 
-3. THE GATEKEEPER (STARTING):
-- If history is empty, ASK ONLY: "Masalah spesifik apa yang mau dibahas?" & "Goal kamu apa?". Do not teach yet.
+PHASE 4: ANTI-HALLUCINATION & DEFLECTION
+- If user asks about a topic NOT in the current step (e.g. asking for "Ads" when discussing "Product"):
+  REJECT IT politely. [cite_start]Say: "Sabar ya, kita selesaikan langkah ini dulu biar akurat." [cite: 31]
 
-4. DIAGNOSIS BEFORE ASSISTANCE (CONSULTANT MODE):
-- When teaching a Step, DO NOT immediately offer to do it for them.
-- FIRST: Explain the step's goal briefly.
-- THEN: Ask a "Diagnosis Question" to check if they already have the data/idea.
-- EXAMPLE (Right Way): "Langkah 1 adalah Riset Kompetitor... Apakah kamu sudah punya data kompetitor, atau mau saya bantu carikan?"
-- EXAMPLE (Wrong Way): "Langkah 1 Riset Kompetitor. Sini saya buatkan listnya." (Too aggressive)
+TONE & STYLE:
+- Direct, Professional, Senior.
+- NO fluff. NO long opening speeches. NO "Saya harap anda sehat".
+- Keep answers under 150 words unless doing a calculation/list.
 
-CURRENT CONTEXT ANALYSIS:
-- User Message: "{request.message}"
-- Check History to determine the CURRENT STEP.
-
-INSTRUCTION:
-Explain the current step from the Knowledge Base.
-End your response with a DIAGNOSIS QUESTION (e.g., "Sudah punya X atau mau dibantu?").
+CURRENT USER INPUT: "{request.message}"
 """
     
     final_messages = [{"role": "system", "content": system_prompt}] + messages_payload
@@ -228,8 +226,8 @@ End your response with a DIAGNOSIS QUESTION (e.g., "Sudah punya X atau mau diban
     try:
         completion = client.chat.completions.create(
             messages=final_messages,
-            model="llama-3.3-70b-versatile",
-            temperature=0.0, 
+            model="llama-3.3-70b-versatile", # Model Llama 3.3 paling bagus untuk instruksi kompleks
+            temperature=0.0, # 0.0 means ZERO creativity. Pure logic.
             max_tokens=1000, 
         )
         ai_reply = completion.choices[0].message.content
@@ -257,7 +255,8 @@ End your response with a DIAGNOSIS QUESTION (e.g., "Sudah punya X atau mau diban
 
     return {"mentor": mentor['name'], "reply": ai_reply, "job_id": job_id}
 
-# --- API LAINNYA (SAMA SEPERTI SEBELUMNYA) ---
+# --- API LAINNYA (TETAP ADA DAN TIDAK DIUBAH) ---
+
 @app.get("/mentors/search")
 async def search_mentors(keyword: str = None):
     query = supabase.table("mentors").select("*").eq("is_active", True)

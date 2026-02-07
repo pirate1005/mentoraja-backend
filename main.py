@@ -82,7 +82,7 @@ class ChatRequest(BaseModel):
 class PaymentRequest(BaseModel):
     user_id: str
     mentor_id: int
-    amount: int
+    duration_hours: int = 1  # Default 1 jam
     email: str = "-" 
     first_name: str = "User"
 
@@ -119,6 +119,10 @@ class DeleteChatRequest(BaseModel):
 class DeleteDocsRequest(BaseModel):
     mentor_id: int
 
+class FavoriteRequest(BaseModel):
+    user_id: str
+    mentor_id: int
+
 # ==========================================
 # 4. API ENDPOINTS
 # ==========================================
@@ -131,10 +135,16 @@ def home():
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
     # 1. Cek Subscription
-    thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
+    now_str = datetime.now().isoformat()
+    
+    # Cari langganan yang status='settlement' DAN expires_at-nya masih di masa depan
     sub_check = supabase.table("subscriptions").select("*")\
-        .eq("user_id", request.user_id).eq("mentor_id", request.mentor_id)\
-        .eq("status", "settlement").gte("created_at", thirty_days_ago).execute()
+        .eq("user_id", request.user_id)\
+        .eq("mentor_id", request.mentor_id)\
+        .eq("status", "settlement")\
+        .gt("expires_at", now_str)\
+        .execute()
+        
     is_subscribed = len(sub_check.data) > 0
     
     # 2. Cek Limit
@@ -323,16 +333,89 @@ async def reset_mentor_docs(req: DeleteDocsRequest):
 
 @app.post("/payment/create")
 async def create_payment(req: PaymentRequest):
-    fee = req.amount * 0.1
-    order_id = f"SUB-{req.user_id[:4]}-{datetime.now().strftime('%d%H%M%S')}"
-    transaction = snap.create_transaction({"transaction_details": {"order_id": order_id, "gross_amount": req.amount}, "customer_details": {"user_id": req.user_id, "email": req.email, "first_name": req.first_name}})
-    supabase.table("subscriptions").insert({"user_id": req.user_id, "mentor_id": req.mentor_id, "midtrans_order_id": order_id, "amount": req.amount, "net_amount": req.amount-fee, "platform_fee_amount": fee, "status": "pending"}).execute()
+    # 1. Ambil harga per jam mentor dari database
+    mentor = supabase.table("mentors").select("price_per_month").eq("id", req.mentor_id).single().execute()
+    
+    # Asumsi: kolom 'price_per_month' di DB sekarang dianggap sebagai 'price_per_hour'
+    price_per_hour = mentor.data['price_per_month'] 
+    
+    # 2. Hitung Total Bayar (Harga x Jam)
+    gross_amount = price_per_hour * req.duration_hours
+    
+    # 3. Hitung Fee Platform (10%)
+    fee = int(gross_amount * 0.1)
+    net_amount = gross_amount - fee
+    
+    # 4. Buat Order ID Unik (Tambahkan durasi di metadata jika perlu)
+    # Format: SUB-{UserID}-{Time}-{Duration}
+    order_id = f"SUB-{req.user_id[:4]}-{datetime.now().strftime('%d%H%M%S')}-{req.duration_hours}"
+
+    # 5. Request ke Midtrans
+    transaction_params = {
+        "transaction_details": {
+            "order_id": order_id, 
+            "gross_amount": gross_amount
+        },
+        "customer_details": {
+            "first_name": req.first_name, 
+            "email": req.email
+        },
+        # PENTING: Kirim durasi via custom_field agar webhook tahu berapa jam yg dibeli
+        "custom_field1": str(req.duration_hours), 
+        "custom_field2": req.user_id,
+        "custom_field3": str(req.mentor_id)
+    }
+    
+    transaction = snap.create_transaction(transaction_params)
+    
+    # 6. Simpan ke Database (Status: Pending)
+    # Kita simpan dulu durasi/hours yg dibeli, tapi start_date & expires_at nanti pas settlement
+    supabase.table("subscriptions").insert({
+        "user_id": req.user_id, 
+        "mentor_id": req.mentor_id, 
+        "midtrans_order_id": order_id, 
+        "amount": gross_amount, 
+        "net_amount": net_amount, 
+        "platform_fee_amount": fee, 
+        "status": "pending"
+        # Note: start_date & expires_at masih NULL
+    }).execute()
+    
     return {"token": transaction['token'], "redirect_url": transaction['redirect_url']}
 
 @app.post("/midtrans-notification")
 async def midtrans_notification(n: dict):
-    status = 'settlement' if n['transaction_status'] in ['capture', 'settlement'] else 'failed'
-    supabase.table("subscriptions").update({"status": status}).eq("midtrans_order_id", n['order_id']).execute()
+    transaction_status = n.get('transaction_status')
+    order_id = n.get('order_id')
+    
+    if transaction_status in ['capture', 'settlement']:
+        # 1. Tentukan Waktu Mulai (Sekarang)
+        start_time = datetime.now()
+        
+        # 2. Ambil Durasi Pembelian
+        # Cara A: Parsing dari Order ID (jika formatnya SUB-USER-TIME-DURATION)
+        # Cara B: Ambil default 1 jam (jika logic parsing ribet)
+        try:
+            parts = order_id.split('-')
+            duration_hours = int(parts[-1]) # Mengambil angka terakhir dari Order ID
+        except:
+            duration_hours = 1 # Default fallback
+            
+        # 3. Hitung Waktu Habis (Start + Duration)
+        expiry_time = start_time + timedelta(hours=duration_hours)
+        
+        # 4. Update Database
+        supabase.table("subscriptions").update({
+            "status": "settlement",
+            "start_date": start_time.isoformat(),
+            "expires_at": expiry_time.isoformat() # <--- PENTING!
+        }).eq("midtrans_order_id", order_id).execute()
+        
+    elif transaction_status in ['deny', 'cancel', 'expire']:
+        supabase.table("subscriptions").update({
+            "status": "failed"
+        }).eq("midtrans_order_id", order_id).execute()
+        
     return {"status": "ok"}
 
 @app.post("/user/update-profile")
@@ -340,3 +423,33 @@ async def update_profile(user_id: str, full_name: str = None, avatar_url: str = 
     data = {k: v for k, v in {"full_name": full_name, "avatar_url": avatar_url}.items() if v}
     if data: supabase.table("profiles").update(data).eq("id", user_id).execute()
     return {"status": "ok"}
+
+@app.post("/favorites/toggle")
+async def toggle_favorite(req: FavoriteRequest):
+    # Cek apakah sudah ada?
+    existing = supabase.table("favorites").select("*")\
+        .eq("user_id", req.user_id).eq("mentor_id", req.mentor_id).execute()
+    
+    if existing.data:
+        # Jika ada -> Hapus (Unlike)
+        supabase.table("favorites").delete()\
+            .eq("user_id", req.user_id).eq("mentor_id", req.mentor_id).execute()
+        return {"status": "removed"}
+    else:
+        # Jika belum -> Tambah (Like)
+        supabase.table("favorites").insert({
+            "user_id": req.user_id, 
+            "mentor_id": req.mentor_id
+        }).execute()
+        return {"status": "added"}
+
+@app.get("/favorites/{user_id}")
+async def get_user_favorites(user_id: str):
+    # Ambil data favorites sekaligus data mentor-nya (Join)
+    # Syntax select: favorites(*, mentors(*))
+    data = supabase.table("favorites").select("mentor_id, mentors(*)")\
+        .eq("user_id", user_id).execute()
+        
+    # Rapikan format return agar hanya list mentor
+    result = [item['mentors'] for item in data.data if item['mentors']]
+    return result

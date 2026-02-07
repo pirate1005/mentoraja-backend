@@ -21,8 +21,8 @@ import pypdf
 load_dotenv()
 
 app = FastAPI(
-    title="AI Mentor SaaS Platform - V23 (Ultimate Strict Logic)",
-    description="Backend AI Mentor V23. Enforcing 'Logic Feb 2026' via Chain-of-Thought Prompting."
+    title="AI Mentor SaaS Platform - V25 (Universal Strict Logic)",
+    description="Backend AI Mentor V25. Universal logic that adapts to ANY Mentor's PDF/Knowledge Base."
 )
 
 app.add_middleware(
@@ -51,7 +51,7 @@ try:
         server_key=os.getenv("MIDTRANS_SERVER_KEY"),
         client_key=os.getenv("MIDTRANS_CLIENT_KEY")
     )
-    print("✅ System Ready: V23 (Ultimate Strict Mode)")
+    print("✅ System Ready: V25 (Universal Logic)")
 except Exception as e:
     print(f"❌ Error Setup: {e}")
 
@@ -125,9 +125,9 @@ class DeleteDocsRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "AI Mentor Backend V23 Active"}
+    return {"status": "AI Mentor Backend V25 Active"}
 
-# --- API CHAT UTAMA (V23 STRICT LOGIC) ---
+# --- API CHAT UTAMA (V25 UNIVERSAL DYNAMIC) ---
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
     # 1. Cek Subscription
@@ -147,20 +147,21 @@ async def chat_with_mentor(request: ChatRequest):
 
     # 3. Data Mentor & KB
     mentor_data = supabase.table("mentors").select("*").eq("id", request.mentor_id).single().execute()
-    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "personality": "Senior Consultant", "expertise": "Bisnis", "avatar_url": None}
+    # Fallback default personality
+    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "personality": "Expert Advisor", "expertise": "General", "avatar_url": None}
     
     docs = supabase.table("mentor_docs").select("content").eq("mentor_id", request.mentor_id).execute()
-    # Pastikan KB ada isinya, kalau kosong kasih placeholder agar tidak error
+    # KNOWLEDGE BASE INI ADALAH KUNCI UNIVERSALNYA
     knowledge_base = "\n\n".join([d['content'] for d in docs.data])
     if not knowledge_base:
-        knowledge_base = "Guidelines: 1. Ask Problem & Goal. 2. Teach steps sequentially."
+        knowledge_base = "Guidelines: 1. Ask Problem & Goal. 2. Teach steps sequentially based on common knowledge."
 
     # 4. Simpan Chat User
     supabase.table("chat_history").insert({
         "user_id": request.user_id, "mentor_id": request.mentor_id, "sender": "user", "message": request.message
     }).execute()
 
-    # 5. Fetch History (Untuk Context)
+    # 5. Fetch History
     past_chats = supabase.table("chat_history").select("sender, message")\
         .eq("user_id", request.user_id).eq("mentor_id", request.mentor_id)\
         .order("created_at", desc=True).limit(10).execute().data
@@ -173,50 +174,46 @@ async def chat_with_mentor(request: ChatRequest):
             messages_payload.append({"role": role, "content": chat['message']})
 
     # ==============================================================================
-    # SYSTEM PROMPT V23 (CHAIN OF THOUGHT & NEGATIVE PROMPTING)
+    # SYSTEM PROMPT V25 (UNIVERSAL DYNAMIC ENGINE)
     # ==============================================================================
-    # Kita menggunakan teknik "Role-play Hardening" agar AI tidak keluar jalur.
+    # Perubahan: Roadmap tidak di-hardcode, tapi dibaca dari Knowledge Base.
     
     system_prompt = f"""
-YOU ARE NOT A HELPFUL ASSISTANT. YOU ARE A STRICT BUSINESS SIMULATOR PROGRAM.
-YOUR NAME: {mentor['name']}
-YOUR KNOWLEDGE BASE (THE ONLY TRUTH):
+YOU ARE {mentor['name']}, AN EXPERT IN {mentor.get('expertise', 'Fields')}.
+YOUR PERSONALITY IS: {mentor.get('personality', 'Professional')}.
+
+SOURCE OF TRUTH (KNOWLEDGE BASE):
 {knowledge_base}
 
-YOUR STRICT BEHAVIORAL PROTOCOL (DO NOT VIOLATE):
+==================================================
+UNIVERSAL INSTRUCTION:
+Your "Roadmap" or "Steps" are contained inside the KNOWLEDGE BASE above.
+You must extract the logical steps from the text above and teach them sequentially.
 
-PHASE 1: THE INITIAL GATE (MANDATORY)
-Check the conversation history.
-- IF user has NOT explicitly stated "1 specific problem" AND "1 specific goal" yet:
-  YOU MUST IGNORE everything else (greetings, introductions, small talk).
-  YOU MUST ASK EXACTLY:
-  "Halo. Sebelum mulai, saya perlu tahu 2 hal wajib:
-   1. Apa 1 masalah spesifik yang mau dibahas?
-   2. Apa goal/hasil yang kamu harapkan?"
-  
-  [cite_start][CRITICAL]: DO NOT ask about "modal", "jenis bisnis", or "pengalaman". ONLY ask the 2 questions above. [cite: 3, 4]
+BEHAVIORAL PROTOCOL (STRICT):
 
-PHASE 2: THE TEACHING LOOP (SEQUENTIAL)
-- IF (and ONLY IF) user has answered Phase 1:
-  Start teaching the "17 Steps" from the Knowledge Base.
-  [cite_start]TEACH ONE STEP AT A TIME. [cite: 6]
-  
-PHASE 3: THE "DO IT FOR YOU" OFFER
-- At the end of explaining a step, you MUST Offer Execution Help.
-- [cite_start]If the step involves numbers (Pricing, HPP), ask: "Berapa angka kamu? Mau saya hitungkan?" [cite: 14]
-- If the step involves writing (Copywriting, Research), ask: "Mau saya buatkan contohnya?"
-- [cite_start]IF user says "Bantu saya" or gives data: CALCULATE/WRITE IT immediately based on Knowledge Base formulas. [cite: 18]
+PHASE 1: MANDATORY OPENING
+If this is the start of conversation, ASK ONLY:
+1. "1 masalah spesifik apa yang mau kamu bahas?"
+2. "Goal kamu apa / kamu berharap hasilnya apa?"
 
-PHASE 4: ANTI-HALLUCINATION & DEFLECTION
-- If user asks about a topic NOT in the current step (e.g. asking for "Ads" when discussing "Product"):
-  REJECT IT politely. [cite_start]Say: "Sabar ya, kita selesaikan langkah ini dulu biar akurat." [cite: 31]
+PHASE 2: SEQUENTIAL TEACHING
+- Identify the steps from the Knowledge Base.
+- Teach ONE step at a time.
+- Do NOT jump to the end.
 
-TONE & STYLE:
-- Direct, Professional, Senior.
-- NO fluff. NO long opening speeches. NO "Saya harap anda sehat".
-- Keep answers under 150 words unless doing a calculation/list.
+PHASE 3: "DO IT FOR YOU" (ASSISTANCE)
+- At the end of every step explanation, OFFER HELP.
+- If the step involves calculation/planning/writing based on the Knowledge Base, ask: "Mau saya bantu buatkan/hitungkan?"
+- If user accepts, execute it using the Knowledge Base rules.
 
-CURRENT USER INPUT: "{request.message}"
+PHASE 4: DEFLECTION
+- If user asks about a topic that belongs to a later step (or is unrelated to the Knowledge Base), REJECT IT politely.
+- Say: "Sabar ya, kita selesaikan langkah ini dulu."
+
+CURRENT CONTEXT:
+User Name: {request.user_first_name}
+User Message: "{request.message}"
 """
     
     final_messages = [{"role": "system", "content": system_prompt}] + messages_payload
@@ -226,9 +223,9 @@ CURRENT USER INPUT: "{request.message}"
     try:
         completion = client.chat.completions.create(
             messages=final_messages,
-            model="llama-3.3-70b-versatile", # Model Llama 3.3 paling bagus untuk instruksi kompleks
-            temperature=0.0, # 0.0 means ZERO creativity. Pure logic.
-            max_tokens=1000, 
+            model="llama-3.3-70b-versatile",
+            temperature=0.1, 
+            max_tokens=1200, 
         )
         ai_reply = completion.choices[0].message.content
     except Exception as e:
@@ -255,8 +252,7 @@ CURRENT USER INPUT: "{request.message}"
 
     return {"mentor": mentor['name'], "reply": ai_reply, "job_id": job_id}
 
-# --- API LAINNYA (TETAP ADA DAN TIDAK DIUBAH) ---
-
+# --- API LAINNYA ---
 @app.get("/mentors/search")
 async def search_mentors(keyword: str = None):
     query = supabase.table("mentors").select("*").eq("is_active", True)

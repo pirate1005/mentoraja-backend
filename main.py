@@ -1,6 +1,8 @@
 import os
 import json
 import re
+import uuid  # Diambil dari Kode B
+import requests  # Diambil dari Kode B
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -19,8 +21,8 @@ import pypdf
 load_dotenv()
 
 app = FastAPI(
-    title="AI Mentor SaaS Platform - V19 (Full Output Engine)",
-    description="Backend AI Mentor dengan fitur Full Output 17 Langkah & High Token Limit."
+    title="AI Mentor SaaS Platform - V19 (Full Output + Video Engine)",
+    description="Backend AI Mentor V19 dengan fitur Full Output 17 Langkah & Integrasi Video Avatar."
 )
 
 app.add_middleware(
@@ -32,19 +34,65 @@ app.add_middleware(
 )
 
 try:
-    supabase: Client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    # --- SETUP CREDENTIALS (GABUNGAN) ---
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+    
+    # Setup dari Kode B (ElevenLabs)
+    ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+    ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM") 
+
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    client = Groq(api_key=GROQ_API_KEY)
+    
     snap = midtransclient.Snap(
         is_production=False, 
         server_key=os.getenv("MIDTRANS_SERVER_KEY"),
         client_key=os.getenv("MIDTRANS_CLIENT_KEY")
     )
-    print("✅ System Ready: V19 (Full Output Engine Active)")
+    print("✅ System Ready: V19 (Full Output + ElevenLabs Video Engine)")
 except Exception as e:
     print(f"❌ Error Setup: {e}")
 
 # ==========================================
-# 2. DATA MODELS
+# 2. HELPER FUNCTIONS (DARI KODE B)
+# ==========================================
+def generate_elevenlabs_audio(text: str) -> bytes:
+    """Mengubah teks menjadi audio binary menggunakan ElevenLabs API (Diambil dari Kode B)"""
+    if not ELEVENLABS_API_KEY:
+        print("⚠️ ElevenLabs API Key missing in .env!")
+        return None
+
+    # URL API ElevenLabs
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
+    headers = {
+        "Accept": "audio/mpeg",
+        "Content-Type": "application/json",
+        "xi-api-key": ELEVENLABS_API_KEY
+    }
+    # Batasi teks jika terlalu panjang untuk menghemat kuota/waktu render audio
+    # Opsional: Bisa dipotong jika V19 menghasilkan output sangat panjang
+    truncated_text = text[:1000] if len(text) > 1000 else text
+    
+    data = {
+        "text": truncated_text, 
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+    }
+    try:
+        response = requests.post(url, json=data, headers=headers)
+        if response.status_code == 200:
+            return response.content
+        else:
+            print(f"ElevenLabs Error ({response.status_code}): {response.text}")
+            return None
+    except Exception as e:
+        print(f"ElevenLabs Exception: {e}")
+        return None
+
+# ==========================================
+# 3. DATA MODELS
 # ==========================================
 class ChatRequest(BaseModel):
     user_id: str
@@ -96,12 +144,12 @@ class DeleteDocsRequest(BaseModel):
 
 
 # ==========================================
-# 3. API ENDPOINTS
+# 4. API ENDPOINTS
 # ==========================================
 
 @app.get("/")
 def home():
-    return {"status": "AI Mentor SaaS Backend V19.0 (Full Output) is Running"}
+    return {"status": "AI Mentor SaaS Backend V19.0 (Full Output + Video Engine) is Running"}
 
 # --- A. API AI DISCOVERY ---
 @app.post("/discovery/generate-questions")
@@ -129,17 +177,17 @@ async def generate_discovery_questions(data: DiscoveryInput):
         ]
 
 
-# --- B. API UTAMA: CHAT (V19 - FULL OUTPUT LOGIC) ---
+# --- B. API UTAMA: CHAT (V19 Base + V13 Features) ---
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
-    # 1. Cek Subscription
+    # 1. Cek Subscription (Logika V19)
     thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
     sub_check = supabase.table("subscriptions").select("*")\
         .eq("user_id", request.user_id).eq("mentor_id", request.mentor_id)\
         .eq("status", "settlement").gte("created_at", thirty_days_ago).execute()
     is_subscribed = len(sub_check.data) > 0
     
-    # 2. Cek Limit
+    # 2. Cek Limit (Logika V19)
     history_count = supabase.table("chat_history").select("id", count="exact")\
         .eq("user_id", request.user_id).eq("mentor_id", request.mentor_id).eq("sender", "user").execute()
     user_chat_count = history_count.count if history_count.count else 0
@@ -149,7 +197,8 @@ async def chat_with_mentor(request: ChatRequest):
 
     # 3. Data Mentor & PDF
     mentor_data = supabase.table("mentors").select("*").eq("id", request.mentor_id).single().execute()
-    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "personality": "Senior Consultant", "expertise": "Bisnis"}
+    # Update fallback agar punya field avatar_url (penting untuk Kode B)
+    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "personality": "Senior Consultant", "expertise": "Bisnis", "avatar_url": None}
     
     docs = supabase.table("mentor_docs").select("content").eq("mentor_id", request.mentor_id).execute()
     knowledge_base = "\n\n".join([d['content'] for d in docs.data])
@@ -172,64 +221,76 @@ async def chat_with_mentor(request: ChatRequest):
             messages_payload.append({"role": role, "content": chat['message']})
 
     # ==============================================================================
-    # SYSTEM PROMPT V19 (FULL OUTPUT & PROACTIVE)
+    # SYSTEM PROMPT V20 (UPDATED FEB 2026 LOGIC COMPLIANCE)
     # ==============================================================================
     system_prompt = f"""
-LIVE CONSULTANT ENGINE — V19 FULL OUTPUT PROTOCOL
+ROLE & IDENTITY
+You are {mentor['name']}, a senior business practitioner/mentor.
+Your goal is to guide the user through the 17-step business framework from the Knowledge Base sequentially.
 
-IDENTITY:
-You are {mentor['name']}, a senior business consultant.
-Goal: To guide the client through the steps in the Knowledge Base.
-
-KNOWLEDGE BASE (SOURCE OF TRUTH - "17 LANGKAH"):
+SOURCE OF TRUTH (KNOWLEDGE BASE):
 {knowledge_base}
 
-================================================
-SECTION A: SCOPE & BOUNDARIES (STRICT)
-1. **DOMAIN LOCK**: Only discuss Business, Strategy, Marketing, Sales based on the PDF.
-2. **HARD REFUSAL**: Refuse coding, politics, or gossip politely.
-3. **NO CHIT-CHAT**: Bridge back to the business goal immediately.
+========================================================
+LOGIC UPDATE FEB 2026 PROTOCOL (STRICT COMPLIANCE)
+========================================================
 
-SECTION B: THE "17 STEPS" COMPLIANCE (FULL OUTPUT MODE)
-1. **NO SUMMARIZATION**: If the user asks for "Langkah-langkahnya" or "Apa saja langkahnya?", **YOU MUST OUTPUT ALL 17 STEPS** from the PDF.
-2. **NO TRUNCATION**: Do not stop at step 5 or 10. Do not ask "Should I continue?". Write them ALL out immediately.
-3. **Format**: List them clearly (Step 1, Step 2, ... Step 17) with a brief 1-sentence explanation for each.
+PHASE 1: MANDATORY OPENING (DO NOT SKIP)
+Before teaching anything, you MUST ask these two questions first. Do not proceed until the user answers BOTH.
+1. "1 masalah spesifik apa yang mau kamu bahas?"
+2. "Goal kamu apa / kamu berharap hasilnya apa?"
+[cite: 1, 3, 4, 5]
 
-SECTION C: PROACTIVE "OFFER TO HELP" (THE "DO IT FOR YOU" PROTOCOL)
-After listing the steps (or when discussing a specific step), **Offer to do the work based on the 'Output' section in PDF.**
+PHASE 2: SEQUENTIAL TEACHING (STEP-BY-STEP)
+Only after the user answers the opening questions, begin teaching the steps one by one.
+- Start with: "Baik, jadi saya akan mulai ajarin kamu langkah-langkah." [cite: 6, 7]
+- Teach ONE step at a time. Do not dump all 17 steps at once.
 
-- **Scenario: Calculation (Pricing/Profit/Margin)**
-  - PDF Rule: "Margin min 50%".
-  - YOUR ACTION: Ask "Berapa harga modal (HPP) kamu? Sini saya hitungkan harga jual minimalnya."
-  
-- **Scenario: Research (Competitor/Supplier)**
-  - PDF Rule: "Riset 5-10 kompetitor".
-  - YOUR ACTION: Ask "Kamu jualan apa? Mau saya bantu buatkan daftar poin riset kompetitor?"
-  
-- **Scenario: Content/Copywriting**
-  - PDF Rule: "Rumus copywriting masalah + solusi".
-  - YOUR ACTION: Offer "Mau saya buatkan contoh copywriting untuk produkmu sekarang?"
+PHASE 3: DATA COLLECTION & OUTPUT EXECUTION (PER STEP)
+For every step you teach, you MUST ask for user data to make it contextual. [cite: 8]
 
-SECTION D: PSYCHOLOGICAL & TIMING (FROM "KONSULTAN RULES")
-1. **Clarity Before Pressure**: Clarify the problem first.
-2. **Resistance = SLOW DOWN**: If user says "bingung", soften the tone.
+**RULE A: If User Has Data**
+- If the user provides data (e.g., "My price is Rp20.000"), record it mentally for future context. [cite: 16]
 
-OUTPUT STRUCTURE:
-1. Brief acknowledgment.
-2. **THE CONTENT**: 
-   - If user asks for the list -> **Provide ALL 17 Steps**.
-   - If user asks about specific problem -> Explain the relevant step.
-3. **THE OFFER**: Explicitly offer to help execute the "Output" (Calculate, Write, or List).
+**RULE B: If User Does Not Have Data / Needs Help (THE "DO IT FOR YOU" OFFER)**
+- If the step requires a calculation or output (e.g., pricing, copywriting), OFFER TO DO IT.
+- Example: "Harga jual minimal harus margin 50% dari HPP. Berapa harga jual kamu? Atau kamu mau saya bantu hitung harga jualmu?" [cite: 14]
+- If user asks for help: Calculate it immediately using the formula in Knowledge Base.
+  Example output: "HPP Rp10.000 + margin 50% (Rp5.000) = harga jual minimal Rp15.000." [cite: 18, 19]
 
-CONTEXT:
+**RULE C: If No Data Needed**
+- If a step is purely theoretical or requires no data, close the step by asking: "Apakah kamu memiliki pertanyaan?" [cite: 22, 28]
+
+PHASE 4: HANDLING OUT-OF-CONTEXT QUESTIONS
+If the user asks a question that is NOT related to the current step being discussed:
+- DO NOT answer it yet. [cite: 29]
+- Politely deflect and steer back to the current step to ensure accuracy.
+- Say: "Sabar ya, pertanyaan kamu itu penting dan akan kita bahas nanti. Tapi biar hasilnya akurat, kita bahas satu per satu dulu." [cite: 31]
+
+PHASE 5: SESSION CLOSING
+After all steps are completed:
+- Ask if the main problem is solved.
+- Example: "Oke, kita sudah selesai membahas semua langkahnya. Menurut kamu, masalah utama kamu sudah terjawab? Atau masih ada pertanyaan lain?" [cite: 32, 35, 36]
+
+========================================================
+CONTEXT & MEMORY
 User Name: {request.user_first_name}
-Business Type: {request.business_type}
-User Message: "{request.message}"
+User Goal/Context: {request.business_snapshot}
+Current Conversation History: See messages below.
+
+INSTRUCTION:
+- Check the conversation history.
+- If this is the start, trigger PHASE 1.
+- If in the middle of steps, continue to the next step (PHASE 2 & 3).
+- If user asks something random, trigger PHASE 4.
+- If all steps done, trigger PHASE 5.
+- Keep tone professional, direct, yet warm ("Senior Mentor").
 """
     
     final_messages = [{"role": "system", "content": system_prompt}] + messages_payload
     final_messages.append({"role": "user", "content": request.message})
     
+    ai_reply = ""
     try:
         # REQUEST KE LLM - MAX TOKENS DINAIKKAN KE 3500 AGAR CUKUP UNTUK 17 LANGKAH
         completion = client.chat.completions.create(
@@ -244,11 +305,55 @@ User Message: "{request.message}"
         print(f"Error AI: {e}")
         ai_reply = "Hmm, sepertinya sinyal saya terganggu. Boleh diulang bagian terakhir?"
 
+    # Simpan Balasan AI
     supabase.table("chat_history").insert({
         "user_id": request.user_id, "mentor_id": request.mentor_id, "sender": "ai", "message": ai_reply
     }).execute()
 
-    return {"mentor": mentor['name'], "reply": ai_reply}
+    # =========================================================
+    # 🚀 FITUR TAMBAHAN DARI KODE B (VIDEO ENGINE TRIGGER)
+    # =========================================================
+    job_id = None
+    # Syarat: Balasan ada isinya DAN Mentor punya Avatar URL di database
+    if len(ai_reply) > 2 and mentor.get('avatar_url'):
+        try:
+            print("🔊 Generating Audio via ElevenLabs...")
+            # Panggil Helper Function dari Kode B
+            audio_bytes = generate_elevenlabs_audio(ai_reply)
+            
+            if audio_bytes:
+                # A. Upload Audio ke Supabase Storage
+                filename = f"audio/{uuid.uuid4()}.mp3"
+                supabase.storage.from_("avatars").upload(
+                    path=filename, 
+                    file=audio_bytes, 
+                    file_options={"content-type": "audio/mpeg"}
+                )
+                
+                # B. Dapatkan URL Public Audio
+                audio_url = supabase.storage.from_("avatars").get_public_url(filename)
+                
+                # C. Masukkan Job ke Antrian (Tabel avatar_jobs)
+                # Sesuai logika Kode B, kita insert job agar worker video bisa memprosesnya
+                job_data = {
+                    "status": "pending",
+                    "image_url": mentor['avatar_url'],
+                    "audio_url": audio_url
+                }
+                res = supabase.table("avatar_jobs").insert(job_data).execute()
+                
+                # Cek hasil insert
+                if res.data and len(res.data) > 0:
+                    job_id = res.data[0]['id']
+                    print(f"⚡ Job Video Created: {job_id}")
+                else:
+                    print("⚠️ Job Created but no ID returned (Check DB)")
+
+        except Exception as e:
+            print(f"⚠️ Video Generation Error: {e}")
+
+    # Return sudah dimodifikasi untuk menyertakan job_id (penting untuk frontend)
+    return {"mentor": mentor['name'], "reply": ai_reply, "job_id": job_id}
 
 
 # --- C. API PENDUKUNG ---

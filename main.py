@@ -21,8 +21,8 @@ import pypdf
 load_dotenv()
 
 app = FastAPI(
-    title="AI Mentor SaaS Platform - V32 (The Strict Director)",
-    description="Backend AI Mentor V32. Fixes Bio format, Enforces Pitch Deck splitting, and Hardens Anti-Skip logic."
+    title="AI Mentor SaaS Platform - V34 (Strict Step Enforcer)",
+    description="Backend AI Mentor V34. Enforces strict step-by-step progression. Prevents jumping ahead."
 )
 
 app.add_middleware(
@@ -51,7 +51,7 @@ try:
         server_key=os.getenv("MIDTRANS_SERVER_KEY"),
         client_key=os.getenv("MIDTRANS_CLIENT_KEY")
     )
-    print("✅ System Ready: V32 (The Strict Director)")
+    print("✅ System Ready: V34 (Strict Step Enforcer)")
 except Exception as e:
     print(f"❌ Error Setup: {e}")
 
@@ -125,9 +125,9 @@ class DeleteDocsRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "AI Mentor Backend V32 Active"}
+    return {"status": "AI Mentor Backend V34 Active"}
 
-# --- API CHAT UTAMA (V32 STRICT DIRECTOR) ---
+# --- API CHAT UTAMA (V34 STRICT ENFORCER) ---
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
     # 1. Cek Subscription
@@ -173,7 +173,7 @@ async def chat_with_mentor(request: ChatRequest):
             messages_payload.append({"role": role, "content": chat['message']})
 
     # ==============================================================================
-    # SYSTEM PROMPT V32 (THE STRICT DIRECTOR)
+    # SYSTEM PROMPT V34 (THE STRICT STEP ENFORCER)
     # ==============================================================================
     
     user_name_instruction = ""
@@ -182,62 +182,47 @@ async def chat_with_mentor(request: ChatRequest):
     else:
         user_name_instruction = "Address the user directly. Do NOT use 'Teman' or 'Kawan'."
 
-    user_name_instruction = ""
-    if request.user_first_name:
-        user_name_instruction = f"Address the user as '{request.user_first_name}'."
-    else:
-        user_name_instruction = "Address the user directly. Do NOT use 'Teman' or 'Kawan'."
-
     system_prompt = f"""
 YOU ARE {mentor['name']}, AN EXPERT IN {mentor.get('expertise', 'Fields')}.
-YOUR PERSONALITY IS: {mentor.get('personality', 'Professional Consultant')}.
+YOUR PERSONALITY IS: {mentor.get('personality', 'Strict & Professional Consultant')}.
 
 SOURCE OF TRUTH (KNOWLEDGE BASE):
 {knowledge_base}
 
 ==================================================
-!!! CRITICAL PRIORITY INSTRUCTIONS !!!
-READ THIS FIRST AND FOLLOW IT ABOVE ALL ELSE.
+!!! CRITICAL EXECUTION RULES !!!
 
-### PROTOCOL 1: THE ABSOLUTE GATEKEEPER (STARTING RULE)
-Check the conversation history.
-**HAS THE USER ANSWERED THESE 2 QUESTIONS?**
+### PROTOCOL 1: THE IRON GATEKEEPER (MANDATORY START)
+Check history. Has the user answered these 2 questions?
 1. "Masalah spesifik apa yang mau dibahas?"
 2. "Goal/Harapan kamu apa?"
 
-**CONDITION: HISTORY IS EMPTY or INCOMPLETE**
-IF the user has NOT answered both questions yet:
-   - **IGNORE** the user's request for tips, strategies, or steps.
-   - **STOP** teaching immediately.
-   - **YOUR ONLY RESPONSE** must be to ask these two questions politely but firmly.
-   - **EXAMPLE REFUSAL:** "Halo. Saya ingin membantu, tapi agar strateginya tepat, saya wajib tahu dulu: 1. Masalah spesifik kamu apa? 2. Goal kamu apa?"
+IF "NO" -> STOP TEACHING. ASK THE 2 QUESTIONS IMMEDIATELY.
+IF "YES" -> Proceed to Protocol 2.
 
-**CONDITION: HISTORY IS COMPLETE**
-IF and ONLY IF the user has answered both:
-   - PROCEED to Protocol 2.
+### PROTOCOL 2: THE ELECTRIC FENCE (ANTI-JUMPING LOGIC)
+You must TRACK the "Current Step" based on conversation history.
+- If we are talking about "Langkah 1" (Ide/Riset), you MUST NOT discuss "Langkah 13" (Promosi), "Langkah 4" (Harga), or "Langkah 17" (Investor).
+- **IF USER ASKS TO JUMP (e.g., "Gimana cara promosi?" while at Step 1):**
+  - **REJECT THE REQUEST.**
+  - **SAY:** "Pertanyaan bagus tentang promosi. Tapi itu ada di Langkah 13. Saat ini kita masih di Langkah 1. Kita harus selesaikan ini dulu agar fondasi bisnis kuat. Mari kembali ke topik..."
+  - **REDIRECT** back to the Current Step immediately.
 
-### PROTOCOL 2: THE ANCHOR (ANTI-SKIP)
-You must follow the steps strictly in order: Langkah 1 -> Langkah 2 -> etc.
-IF the user asks about a future step (e.g., "Langkah 13/Promosi") while you are currently at "Langkah 1" or "Langkah 2":
-   - **BLOCK IT.** Say: "Pertanyaan bagus, tapi itu materi Langkah X. Kita selesaikan dulu langkah saat ini agar fondasinya kuat."
-   - **REDIRECT** back to the current step.
+**EXCEPTION:** Only allow jumping if the user EXPLICITLY says "Saya sudah selesai langkah 1-12" (Providing context). If they just ask a random question, BLOCK IT.
 
-### PROTOCOL 3: STEP-SPECIFIC OUTPUTS
+### PROTOCOL 3: STEP-SPECIFIC FORMATS
 - **Langkah 7 (Bio):** Output MUST be <15 sentences AND include a CTA.
 - **Langkah 17 (Pitch Deck):** Output ONLY Slides 1-5. Then STOP and ask: "Mau lanjut ke Slide 6-10?".
 
 ### PROTOCOL 4: CONSULTANT DIAGNOSIS
-- DO NOT just lecture.
-- Explain the step briefly, then **ASK** if the user has the data.
-- Example: "Langkah 1 adalah Riset. Apakah kamu sudah punya datanya, atau mau saya bantu?"
+- Explain step -> Ask if user has data.
+- Do not lecture endlessly. Make it a conversation.
 
 ADDRESSING:
 - {user_name_instruction}
 
 CURRENT USER MESSAGE:
 "{request.message}"
-
-REMEMBER PROTOCOL 1: IF THEY HAVEN'T SHARED THEIR PROBLEM & GOAL, DO NOT ANSWER THEIR QUESTION. ASK FOR CONTEXT FIRST.
 """
     
     final_messages = [{"role": "system", "content": system_prompt}] + messages_payload
@@ -248,7 +233,7 @@ REMEMBER PROTOCOL 1: IF THEY HAVEN'T SHARED THEIR PROBLEM & GOAL, DO NOT ANSWER 
         completion = client.chat.completions.create(
             messages=final_messages,
             model="llama-3.3-70b-versatile",
-            temperature=0.0, # Zero creativity ensures strict adherence to rules
+            temperature=0.0, 
             max_tokens=1000, 
         )
         ai_reply = completion.choices[0].message.content

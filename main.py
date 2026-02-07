@@ -21,8 +21,8 @@ import pypdf
 load_dotenv()
 
 app = FastAPI(
-    title="AI Mentor SaaS Platform - V25 (Universal Strict Logic)",
-    description="Backend AI Mentor V25. Universal logic that adapts to ANY Mentor's PDF/Knowledge Base."
+    title="AI Mentor SaaS Platform - V26 (Strict Gatekeeper)",
+    description="Backend AI Mentor V26. Universal Logic + Strict Gatekeeping (No Teaching Before Asking)."
 )
 
 app.add_middleware(
@@ -51,7 +51,7 @@ try:
         server_key=os.getenv("MIDTRANS_SERVER_KEY"),
         client_key=os.getenv("MIDTRANS_CLIENT_KEY")
     )
-    print("✅ System Ready: V25 (Universal Logic)")
+    print("✅ System Ready: V26 (Strict Gatekeeper)")
 except Exception as e:
     print(f"❌ Error Setup: {e}")
 
@@ -125,9 +125,9 @@ class DeleteDocsRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "AI Mentor Backend V25 Active"}
+    return {"status": "AI Mentor Backend V26 Active"}
 
-# --- API CHAT UTAMA (V25 UNIVERSAL DYNAMIC) ---
+# --- API CHAT UTAMA (V26 STRICT GATEKEEPER) ---
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
     # 1. Cek Subscription
@@ -147,14 +147,12 @@ async def chat_with_mentor(request: ChatRequest):
 
     # 3. Data Mentor & KB
     mentor_data = supabase.table("mentors").select("*").eq("id", request.mentor_id).single().execute()
-    # Fallback default personality
     mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "personality": "Expert Advisor", "expertise": "General", "avatar_url": None}
     
     docs = supabase.table("mentor_docs").select("content").eq("mentor_id", request.mentor_id).execute()
-    # KNOWLEDGE BASE INI ADALAH KUNCI UNIVERSALNYA
     knowledge_base = "\n\n".join([d['content'] for d in docs.data])
     if not knowledge_base:
-        knowledge_base = "Guidelines: 1. Ask Problem & Goal. 2. Teach steps sequentially based on common knowledge."
+        knowledge_base = "Guidelines: 1. Ask Problem & Goal. 2. Teach steps sequentially."
 
     # 4. Simpan Chat User
     supabase.table("chat_history").insert({
@@ -174,9 +172,8 @@ async def chat_with_mentor(request: ChatRequest):
             messages_payload.append({"role": role, "content": chat['message']})
 
     # ==============================================================================
-    # SYSTEM PROMPT V25 (UNIVERSAL DYNAMIC ENGINE)
+    # SYSTEM PROMPT V26 (THE GATEKEEPER)
     # ==============================================================================
-    # Perubahan: Roadmap tidak di-hardcode, tapi dibaca dari Knowledge Base.
     
     system_prompt = f"""
 YOU ARE {mentor['name']}, AN EXPERT IN {mentor.get('expertise', 'Fields')}.
@@ -186,19 +183,20 @@ SOURCE OF TRUTH (KNOWLEDGE BASE):
 {knowledge_base}
 
 ==================================================
-UNIVERSAL INSTRUCTION:
-Your "Roadmap" or "Steps" are contained inside the KNOWLEDGE BASE above.
-You must extract the logical steps from the text above and teach them sequentially.
+BEHAVIORAL PROTOCOL (STRICT GATEKEEPING):
 
-BEHAVIORAL PROTOCOL (STRICT):
-
-PHASE 1: MANDATORY OPENING
-If this is the start of conversation, ASK ONLY:
-1. "1 masalah spesifik apa yang mau kamu bahas?"
-2. "Goal kamu apa / kamu berharap hasilnya apa?"
+PHASE 1: THE GATEKEEPER (CRITICAL)
+Check conversation history.
+IF the user has NOT answered the 2 mandatory questions yet:
+1. YOU MUST STOP.
+2. DO NOT explain "Step 1" or "Langkah 1".
+3. DO NOT give any advice yet.
+4. YOU MUST ONLY ASK:
+   - "1 masalah spesifik apa yang mau kamu bahas?"
+   - "Goal kamu apa / kamu berharap hasilnya apa?"
 
 PHASE 2: SEQUENTIAL TEACHING
-- Identify the steps from the Knowledge Base.
+- ONLY AFTER Phase 1 is done, extract steps from the Knowledge Base.
 - Teach ONE step at a time.
 - Do NOT jump to the end.
 
@@ -208,7 +206,7 @@ PHASE 3: "DO IT FOR YOU" (ASSISTANCE)
 - If user accepts, execute it using the Knowledge Base rules.
 
 PHASE 4: DEFLECTION
-- If user asks about a topic that belongs to a later step (or is unrelated to the Knowledge Base), REJECT IT politely.
+- If user asks about a topic that belongs to a later step (or is unrelated), REJECT IT politely.
 - Say: "Sabar ya, kita selesaikan langkah ini dulu."
 
 CURRENT CONTEXT:
@@ -224,8 +222,8 @@ User Message: "{request.message}"
         completion = client.chat.completions.create(
             messages=final_messages,
             model="llama-3.3-70b-versatile",
-            temperature=0.1, 
-            max_tokens=1200, 
+            temperature=0.0, # Zero creativity to enforce rules
+            max_tokens=1000, 
         )
         ai_reply = completion.choices[0].message.content
     except Exception as e:

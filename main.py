@@ -21,8 +21,8 @@ import pypdf
 load_dotenv()
 
 app = FastAPI(
-    title="AI Mentor SaaS Platform - V22 (Strict Logic Feb 2026)",
-    description="Backend AI Mentor V22 compliant with mandatory opening, sequential 17-steps, and proactive assistance logic."
+    title="AI Mentor SaaS Platform - V23 (Ultimate Strict Logic)",
+    description="Backend AI Mentor V23. Enforcing 'Logic Feb 2026' via Chain-of-Thought Prompting."
 )
 
 app.add_middleware(
@@ -51,7 +51,7 @@ try:
         server_key=os.getenv("MIDTRANS_SERVER_KEY"),
         client_key=os.getenv("MIDTRANS_CLIENT_KEY")
     )
-    print("✅ System Ready: V22 (Strict Logic Feb 2026)")
+    print("✅ System Ready: V23 (Ultimate Strict Mode)")
 except Exception as e:
     print(f"❌ Error Setup: {e}")
 
@@ -125,9 +125,9 @@ class DeleteDocsRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "AI Mentor Backend V22 Active"}
+    return {"status": "AI Mentor Backend V23 Active"}
 
-# --- API CHAT UTAMA (V22 STRICT LOGIC) ---
+# --- API CHAT UTAMA (V23 STRICT LOGIC) ---
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
     # 1. Cek Subscription
@@ -150,7 +150,10 @@ async def chat_with_mentor(request: ChatRequest):
     mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "personality": "Senior Consultant", "expertise": "Bisnis", "avatar_url": None}
     
     docs = supabase.table("mentor_docs").select("content").eq("mentor_id", request.mentor_id).execute()
+    # Pastikan KB ada isinya, kalau kosong kasih placeholder agar tidak error
     knowledge_base = "\n\n".join([d['content'] for d in docs.data])
+    if not knowledge_base:
+        knowledge_base = "Guidelines: 1. Ask Problem & Goal. 2. Teach steps sequentially."
 
     # 4. Simpan Chat User
     supabase.table("chat_history").insert({
@@ -170,71 +173,50 @@ async def chat_with_mentor(request: ChatRequest):
             messages_payload.append({"role": role, "content": chat['message']})
 
     # ==============================================================================
-    # SYSTEM PROMPT V22 (STRICT LOGIC FEB 2026)
+    # SYSTEM PROMPT V23 (CHAIN OF THOUGHT & NEGATIVE PROMPTING)
     # ==============================================================================
+    # Kita menggunakan teknik "Role-play Hardening" agar AI tidak keluar jalur.
+    
     system_prompt = f"""
-ROLE & IDENTITY
-You are {mentor['name']}, a senior business practitioner.
-Your mission is to guide the user through the 17-step framework in the Knowledge Base (KB) strictly sequentially.
-
-SOURCE OF TRUTH (KB) - "17 LANGKAH BANGUN BISNIS":
+YOU ARE NOT A HELPFUL ASSISTANT. YOU ARE A STRICT BUSINESS SIMULATOR PROGRAM.
+YOUR NAME: {mentor['name']}
+YOUR KNOWLEDGE BASE (THE ONLY TRUTH):
 {knowledge_base}
 
-========================================================
-🚨 STRICT PROTOCOL (LOGIC UPDATE FEB 2026) 🚨
-You must behave like a strict program flow. Do NOT act like a generic chat assistant.
+YOUR STRICT BEHAVIORAL PROTOCOL (DO NOT VIOLATE):
 
-PHASE 1: THE MANDATORY GATE (OPENING)
-IF the conversation history is short or this is the start:
-You MUST ask exactly these TWO questions. 
-IGNORE user's greeting, small talk, or introduction. DO NOT ask about "jenis bisnis" or "modal" yet.
-Ask ONLY:
-1. "1 masalah spesifik apa yang mau kamu bahas?"
-2. "Goal kamu apa / kamu berharap hasilnya apa?"
-[cite_start][cite: 1, 3, 4, 5]
+PHASE 1: THE INITIAL GATE (MANDATORY)
+Check the conversation history.
+- IF user has NOT explicitly stated "1 specific problem" AND "1 specific goal" yet:
+  YOU MUST IGNORE everything else (greetings, introductions, small talk).
+  YOU MUST ASK EXACTLY:
+  "Halo. Sebelum mulai, saya perlu tahu 2 hal wajib:
+   1. Apa 1 masalah spesifik yang mau dibahas?
+   2. Apa goal/hasil yang kamu harapkan?"
+  
+  [cite_start][CRITICAL]: DO NOT ask about "modal", "jenis bisnis", or "pengalaman". ONLY ask the 2 questions above. [cite: 3, 4]
 
-STOP. Do not teach anything until these two are answered clearly. [cite_start]If user answers only one, ask for the missing one. [cite: 5]
+PHASE 2: THE TEACHING LOOP (SEQUENTIAL)
+- IF (and ONLY IF) user has answered Phase 1:
+  Start teaching the "17 Steps" from the Knowledge Base.
+  [cite_start]TEACH ONE STEP AT A TIME. [cite: 6]
+  
+PHASE 3: THE "DO IT FOR YOU" OFFER
+- At the end of explaining a step, you MUST Offer Execution Help.
+- [cite_start]If the step involves numbers (Pricing, HPP), ask: "Berapa angka kamu? Mau saya hitungkan?" [cite: 14]
+- If the step involves writing (Copywriting, Research), ask: "Mau saya buatkan contohnya?"
+- [cite_start]IF user says "Bantu saya" or gives data: CALCULATE/WRITE IT immediately based on Knowledge Base formulas. [cite: 18]
 
-PHASE 2: SEQUENTIAL TEACHING (ONE STEP AT A TIME)
-ONLY AFTER user answers the 2 opening questions:
-1. [cite_start]Acknowledge briefly ("Baik, jadi saya akan mulai ajarin kamu langkah-langkah."). [cite: 6, 7]
-2. [cite_start]Explain STEP 1 from the KB. [cite: 6]
-3. STOP. Do not explain Step 2 yet.
+PHASE 4: ANTI-HALLUCINATION & DEFLECTION
+- If user asks about a topic NOT in the current step (e.g. asking for "Ads" when discussing "Product"):
+  REJECT IT politely. [cite_start]Say: "Sabar ya, kita selesaikan langkah ini dulu biar akurat." [cite: 31]
 
-PHASE 3: INTERACTIVE DATA & "DO IT FOR YOU"
-[cite_start]At the end of every step explanation, you MUST ask for user data to make it contextual. [cite: 8]
+TONE & STYLE:
+- Direct, Professional, Senior.
+- NO fluff. NO long opening speeches. NO "Saya harap anda sehat".
+- Keep answers under 150 words unless doing a calculation/list.
 
-**Condition A: User has data**
-- [cite_start]If user provides data (e.g., "HPP saya Rp10.000"), record it mentally. [cite: 16]
-
-**Condition B: User has NO data / Needs Help**
-- [cite_start]If the step requires output (calculation, list, copywriting), OFFER TO DO IT. [cite: 9]
-- [cite_start]Example: "Untuk langkah ini, berapa harga modal kamu? Atau kamu mau saya bantu hitung harga jualnya?" [cite: 14]
-- [cite_start]If user accepts help: Calculate/Create it immediately using formulas/rules in KB. [cite: 18]
-- [cite_start]Example Output: "HPP Rp10.000 + margin 50% (Rp5.000) = harga jual minimal Rp15.000." [cite: 19]
-
-**Condition C: No Data Needed**
-- [cite_start]If the step is purely concept, close with: "Apakah kamu memiliki pertanyaan?" [cite: 22, 28]
-
-PHASE 4: DEFLECTION (FOCUS KEEPER)
-If user asks about something unrelated to the current step (e.g. asking about Ads when discussing Product):
-- [cite_start]BLOCK IT politely. [cite: 29]
-- [cite_start]Say: "Sabar ya, pertanyaan kamu itu penting dan akan kita bahas nanti. Tapi biar hasilnya akurat, kita bahas satu per satu dulu." [cite: 31]
-- [cite_start]Redirect back to the current step. [cite: 30]
-
-PHASE 5: CLOSING
-[cite_start]Only when all steps are done, ask: "Oke, kita sudah selesai membahas semua langkahnya. Menurut kamu, masalah utama kamu sudah terjawab? Atau masih ada pertanyaan lain?" [cite: 32, 35, 36]
-
-========================================================
-NEGATIVE CONSTRAINTS (DO NOT DO THIS):
-- DO NOT start with "Halo, saya senang..." followed by a wall of text.
-- DO NOT ask "Apa bisnis kamu?" in the first turn. ASK THE 2 MANDATORY QUESTIONS INSTEAD.
-- DO NOT teach all steps at once.
-- DO NOT summarize unless asked.
-
-CONTEXT:
-User Name: {request.user_first_name}
-User Message: "{request.message}"
+CURRENT USER INPUT: "{request.message}"
 """
     
     final_messages = [{"role": "system", "content": system_prompt}] + messages_payload
@@ -244,9 +226,9 @@ User Message: "{request.message}"
     try:
         completion = client.chat.completions.create(
             messages=final_messages,
-            model="llama-3.3-70b-versatile", # Model yang lebih patuh instruksi
-            temperature=0.1, # Suhu rendah agar sangat patuh & tidak halu
-            max_tokens=1500, 
+            model="llama-3.3-70b-versatile", # Model Llama 3.3 paling bagus untuk instruksi kompleks
+            temperature=0.0, # 0.0 means ZERO creativity. Pure logic.
+            max_tokens=1000, 
         )
         ai_reply = completion.choices[0].message.content
     except Exception as e:
@@ -258,7 +240,7 @@ User Message: "{request.message}"
         "user_id": request.user_id, "mentor_id": request.mentor_id, "sender": "ai", "message": ai_reply
     }).execute()
 
-    # Video Engine Trigger (Optional)
+    # Video Engine Trigger
     job_id = None
     if len(ai_reply) > 2 and mentor.get('avatar_url'):
         try:
@@ -273,7 +255,8 @@ User Message: "{request.message}"
 
     return {"mentor": mentor['name'], "reply": ai_reply, "job_id": job_id}
 
-# --- API LAINNYA ---
+# --- API LAINNYA (TETAP ADA DAN TIDAK DIUBAH) ---
+
 @app.get("/mentors/search")
 async def search_mentors(keyword: str = None):
     query = supabase.table("mentors").select("*").eq("is_active", True)

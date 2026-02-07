@@ -21,8 +21,8 @@ import pypdf
 load_dotenv()
 
 app = FastAPI(
-    title="AI Mentor SaaS Platform - V26 (Strict Gatekeeper)",
-    description="Backend AI Mentor V26. Universal Logic + Strict Gatekeeping (No Teaching Before Asking)."
+    title="AI Mentor SaaS Platform - V27 (Step-Locker Logic)",
+    description="Backend AI Mentor V27. Enforces strict numerical progression based on PDF Headers."
 )
 
 app.add_middleware(
@@ -51,7 +51,7 @@ try:
         server_key=os.getenv("MIDTRANS_SERVER_KEY"),
         client_key=os.getenv("MIDTRANS_CLIENT_KEY")
     )
-    print("✅ System Ready: V26 (Strict Gatekeeper)")
+    print("✅ System Ready: V27 (Step-Locker Logic)")
 except Exception as e:
     print(f"❌ Error Setup: {e}")
 
@@ -125,9 +125,9 @@ class DeleteDocsRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "AI Mentor Backend V26 Active"}
+    return {"status": "AI Mentor Backend V27 Active"}
 
-# --- API CHAT UTAMA (V26 STRICT GATEKEEPER) ---
+# --- API CHAT UTAMA (V27 STEP-LOCKER LOGIC) ---
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
     # 1. Cek Subscription
@@ -150,7 +150,9 @@ async def chat_with_mentor(request: ChatRequest):
     mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "personality": "Expert Advisor", "expertise": "General", "avatar_url": None}
     
     docs = supabase.table("mentor_docs").select("content").eq("mentor_id", request.mentor_id).execute()
+    # Gabungkan dokumen
     knowledge_base = "\n\n".join([d['content'] for d in docs.data])
+    
     if not knowledge_base:
         knowledge_base = "Guidelines: 1. Ask Problem & Goal. 2. Teach steps sequentially."
 
@@ -172,7 +174,7 @@ async def chat_with_mentor(request: ChatRequest):
             messages_payload.append({"role": role, "content": chat['message']})
 
     # ==============================================================================
-    # SYSTEM PROMPT V26 (THE GATEKEEPER)
+    # SYSTEM PROMPT V27 (STEP-LOCKER & SEQUENCE ENFORCER)
     # ==============================================================================
     
     system_prompt = f"""
@@ -183,35 +185,31 @@ SOURCE OF TRUTH (KNOWLEDGE BASE):
 {knowledge_base}
 
 ==================================================
-BEHAVIORAL PROTOCOL (STRICT GATEKEEPING):
+CRITICAL INSTRUCTION: SEQUENCE ENFORCEMENT
+You must act like a strict guide who follows the "Langkah" (Steps) numbers in the Knowledge Base exactly.
 
-PHASE 1: THE GATEKEEPER (CRITICAL)
-Check conversation history.
-IF the user has NOT answered the 2 mandatory questions yet:
-1. YOU MUST STOP.
-2. DO NOT explain "Step 1" or "Langkah 1".
-3. DO NOT give any advice yet.
-4. YOU MUST ONLY ASK:
-   - "1 masalah spesifik apa yang mau kamu bahas?"
-   - "Goal kamu apa / kamu berharap hasilnya apa?"
+RULE 1: READ THE NUMBERS
+- Look for headers like "Langkah 1", "Langkah 2", "Langkah 3", etc. in the Knowledge Base.
+- You are FORBIDDEN from jumping numbers.
+- IF user finishes "Langkah 2", you MUST teach "Langkah 3".
+- DO NOT skip to "Langkah 4" (Harga) if "Langkah 3" (Supplier) is not done.
 
-PHASE 2: SEQUENTIAL TEACHING
-- ONLY AFTER Phase 1 is done, extract steps from the Knowledge Base.
-- Teach ONE step at a time.
-- Do NOT jump to the end.
+RULE 2: THE GATEKEEPER (STARTING)
+- If history is empty, ASK ONLY: "Masalah apa yang mau dibahas?" & "Goal kamu apa?". Do not teach yet.
 
-PHASE 3: "DO IT FOR YOU" (ASSISTANCE)
-- At the end of every step explanation, OFFER HELP.
-- If the step involves calculation/planning/writing based on the Knowledge Base, ask: "Mau saya bantu buatkan/hitungkan?"
-- If user accepts, execute it using the Knowledge Base rules.
+RULE 3: "DO IT FOR YOU"
+- Always offer to help/calculate/list things at the end of your response.
 
-PHASE 4: DEFLECTION
-- If user asks about a topic that belongs to a later step (or is unrelated), REJECT IT politely.
-- Say: "Sabar ya, kita selesaikan langkah ini dulu."
+CURRENT CONTEXT ANALYSIS:
+- User Message: "{request.message}"
+- Check History:
+  - Did we just finish "Langkah 2" (Target Market)? -> If YES, your NEXT topic MUST BE "Langkah 3" (Supplier).
+  - Did we just finish "Langkah 3" (Supplier)? -> If YES, your NEXT topic MUST BE "Langkah 4" (Harga).
 
-CURRENT CONTEXT:
-User Name: {request.user_first_name}
-User Message: "{request.message}"
+INSTRUCTION:
+Based on the conversation history, identify which "Langkah" was just finished.
+Then, explain the IMMEDIATE NEXT "Langkah" based on the Knowledge Base.
+Do NOT create your own order. Follow the PDF's numbers.
 """
     
     final_messages = [{"role": "system", "content": system_prompt}] + messages_payload
@@ -222,7 +220,7 @@ User Message: "{request.message}"
         completion = client.chat.completions.create(
             messages=final_messages,
             model="llama-3.3-70b-versatile",
-            temperature=0.0, # Zero creativity to enforce rules
+            temperature=0.0, # Zero creativity to ensure strict logic
             max_tokens=1000, 
         )
         ai_reply = completion.choices[0].message.content

@@ -21,8 +21,8 @@ import pypdf
 load_dotenv()
 
 app = FastAPI(
-    title="AI Mentor SaaS Platform - V31 (Strict Scope & Shield)",
-    description="Backend AI Mentor V31. Adds Anti-OOT (Crypto/Politics) and Anti-Skip Logic."
+    title="AI Mentor SaaS Platform - V32 (The Strict Director)",
+    description="Backend AI Mentor V32. Fixes Bio format, Enforces Pitch Deck splitting, and Hardens Anti-Skip logic."
 )
 
 app.add_middleware(
@@ -51,7 +51,7 @@ try:
         server_key=os.getenv("MIDTRANS_SERVER_KEY"),
         client_key=os.getenv("MIDTRANS_CLIENT_KEY")
     )
-    print("✅ System Ready: V31 (Strict Scope & Shield)")
+    print("✅ System Ready: V32 (The Strict Director)")
 except Exception as e:
     print(f"❌ Error Setup: {e}")
 
@@ -125,9 +125,9 @@ class DeleteDocsRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "AI Mentor Backend V31 Active"}
+    return {"status": "AI Mentor Backend V32 Active"}
 
-# --- API CHAT UTAMA (V31 STRICT SCOPE) ---
+# --- API CHAT UTAMA (V32 STRICT DIRECTOR) ---
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
     # 1. Cek Subscription
@@ -173,7 +173,7 @@ async def chat_with_mentor(request: ChatRequest):
             messages_payload.append({"role": role, "content": chat['message']})
 
     # ==============================================================================
-    # SYSTEM PROMPT V31 (THE SNIPER SCOPE & SHIELD)
+    # SYSTEM PROMPT V32 (THE STRICT DIRECTOR)
     # ==============================================================================
     
     user_name_instruction = ""
@@ -190,28 +190,40 @@ SOURCE OF TRUTH (KNOWLEDGE BASE):
 {knowledge_base}
 
 ==================================================
-PROTOCOL 1: THE SHIELD (OUT OF DOMAIN BLOCKER)
-You must STRICTLY STICK to the Knowledge Base (PDF).
-IF the user asks about topics NOT in the Knowledge Base (e.g., Crypto, Politics, Health, Coding, Romance, General Chat):
-   - REJECT the question politely.
-   - SAY: "Maaf, keahlian saya spesifik membantu bisnis Anda sesuai panduan. Topik [topic] di luar kapasitas saya. Mari kembali ke langkah bisnis kita."
-   - DO NOT answer the OOT question, even if you know the answer.
-
-PROTOCOL 2: THE ANCHOR (ANTI-SKIP SEQUENCE)
-You must detect "Future Steps".
-IF the user asks about a step far ahead (e.g., asking about "Promosi/Langkah 13" while you are still at "Langkah 2"):
-   - DETECT: "User is asking about Step X, but we are at Step Y."
-   - BLOCK: "Pertanyaan bagus. Tapi itu materi Langkah X. Agar bisnisnya kuat, kita harus selesaikan Langkah Y dulu."
-   - REDIRECT: Go back to the Current Step.
-
-PROTOCOL 3: THE IRON GATEKEEPER
+PROTOCOL 1: THE IRON GATEKEEPER (MANDATORY START)
 CHECK: Did the user ALREADY answer these 2 mandatory questions in history?
 1. "1 masalah spesifik apa yang mau kamu bahas?"
 2. "Goal kamu apa?"
 IF "NO" -> STOP & ASK THEM. DO NOT TEACH YET.
+IF "YES" -> Proceed to Protocol 2.
 
+==================================================
+PROTOCOL 2: THE ANCHOR (STRICT ANTI-SKIP)
+You must DETECT the "Current Step" based on conversation history.
+IF user asks about a step far ahead (e.g., asking about "Promosi/Langkah 13" while at "Langkah 2"):
+   - YOU ARE FORBIDDEN FROM ANSWERING THE CONTENT.
+   - BLOCK IT: "Pertanyaan bagus. Tapi itu materi Langkah X. Agar bisnisnya kuat, kita harus selesaikan Langkah Y dulu."
+   - FORCE REDIRECT: Go back to teaching the Current Step.
+
+==================================================
+PROTOCOL 3: STEP-SPECIFIC RULES (SPECIAL HANDLING)
+
+**WHEN AT "Langkah 7" (Akun Bisnis/Bio):**
+- You must generate a Bio draft that is SHORT and PUNCHY.
+- CONSTRAINT: Must be under 15 sentences.
+- CONSTRAINT: MUST include a Call To Action (CTA).
+- Format: [Value Proposition] + [Product Info] + [CTA].
+
+**WHEN AT "Langkah 17" (Investor Pitch Deck):**
+- The content is too long for one message.
+- ACTION: Explain ONLY Slides 1, 2, 3, 4, and 5.
+- STOP THERE.
+- ASK: "Ini 5 slide pertama. Apakah sudah paham? Mau lanjut ke Slide 6-10?"
+- DO NOT output all 10 slides at once.
+
+==================================================
 PROTOCOL 4: CONSULTANT DIAGNOSIS
-- When teaching a step, explain briefly -> THEN ASK if user has data.
+- When teaching any step, explain briefly -> THEN ASK if user has data.
 - Example: "Langkah 1 adalah X. Apakah kamu sudah punya datanya, atau mau saya bantu?"
 
 ADDRESSING:
@@ -229,7 +241,7 @@ User Message: "{request.message}"
         completion = client.chat.completions.create(
             messages=final_messages,
             model="llama-3.3-70b-versatile",
-            temperature=0.0, 
+            temperature=0.0, # Zero creativity ensures strict adherence to rules
             max_tokens=1000, 
         )
         ai_reply = completion.choices[0].message.content
@@ -256,7 +268,6 @@ User Message: "{request.message}"
         except Exception: pass
 
     return {"mentor": mentor['name'], "reply": ai_reply, "job_id": job_id}
-# ...
 
 # --- API LAINNYA (SAMA SEPERTI SEBELUMNYA) ---
 @app.get("/mentors/search")

@@ -21,8 +21,8 @@ import pypdf
 load_dotenv()
 
 app = FastAPI(
-    title="AI Mentor SaaS Platform - V29 (Pro Consultant Logic)",
-    description="Backend AI Mentor V29. Consultant Diagnosis Logic + Formal Address (No 'Teman')."
+    title="AI Mentor SaaS Platform - V30 (Iron Gatekeeper)",
+    description="Backend AI Mentor V30. Enforces Mandatory Opening Questions strictly before any teaching."
 )
 
 app.add_middleware(
@@ -51,7 +51,7 @@ try:
         server_key=os.getenv("MIDTRANS_SERVER_KEY"),
         client_key=os.getenv("MIDTRANS_CLIENT_KEY")
     )
-    print("✅ System Ready: V29 (Pro Consultant Logic)")
+    print("✅ System Ready: V30 (Iron Gatekeeper)")
 except Exception as e:
     print(f"❌ Error Setup: {e}")
 
@@ -76,7 +76,7 @@ class ChatRequest(BaseModel):
     mentor_id: int
     message: str
     business_type: str = "Umum"
-    user_first_name: str = "" # Hapus default "Teman"
+    user_first_name: str = "" 
     business_snapshot: str = "Belum ada data"
 
 class PaymentRequest(BaseModel):
@@ -125,9 +125,9 @@ class DeleteDocsRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "AI Mentor Backend V29 Active"}
+    return {"status": "AI Mentor Backend V30 Active"}
 
-# --- API CHAT UTAMA (V29 PRO CONSULTANT LOGIC) ---
+# --- API CHAT UTAMA (V30 IRON GATEKEEPER) ---
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
     # 1. Cek Subscription
@@ -173,14 +173,14 @@ async def chat_with_mentor(request: ChatRequest):
             messages_payload.append({"role": role, "content": chat['message']})
 
     # ==============================================================================
-    # SYSTEM PROMPT V29 (DIAGNOSIS FIRST & NO 'TEMAN')
+    # SYSTEM PROMPT V30 (IRON GATEKEEPER)
     # ==============================================================================
     
     user_name_instruction = ""
     if request.user_first_name:
-        user_name_instruction = f"Address the user as '{request.user_first_name}'. Do NOT use 'Teman'."
+        user_name_instruction = f"Address the user as '{request.user_first_name}'."
     else:
-        user_name_instruction = "Address the user directly without a nickname. Do NOT use 'Teman' or 'Kawan'."
+        user_name_instruction = "Address the user directly. Do NOT use 'Teman' or 'Kawan'."
 
     system_prompt = f"""
 YOU ARE {mentor['name']}, AN EXPERT IN {mentor.get('expertise', 'Fields')}.
@@ -190,35 +190,35 @@ SOURCE OF TRUTH (KNOWLEDGE BASE):
 {knowledge_base}
 
 ==================================================
-CRITICAL INSTRUCTIONS:
+PRIORITY PROTOCOL: THE IRON GATEKEEPER
+Before answering, you MUST perform this check:
 
-1. ADDRESSING THE USER:
-- {user_name_instruction}
-- Keep the tone professional, encouraging, but strict on the process.
+CHECK: Did the user ALREADY answer these 2 mandatory questions in the conversation history?
+1. "1 masalah spesifik apa yang mau kamu bahas?"
+2. "Goal kamu apa / kamu berharap hasilnya apa?"
 
-2. SEQUENCE ENFORCEMENT (STEP-LOCKER):
-- You must guide the user step-by-step based on the "Langkah" numbers in the Knowledge Base.
-- Follow the sequence: Langkah 1 -> Langkah 2 -> Langkah 3.
+IF "NO" (User has NOT answered both):
+   - STOP immediately.
+   - DO NOT explain "Langkah 1" or "Ide Bisnis".
+   - DO NOT give advice.
+   - YOUR ONLY TASK: Ask the 2 mandatory questions above.
+   - Tone: Professional, welcoming, but firm on needing this info first.
+
+IF "YES" (User has answered both):
+   - PROCEED to "SEQUENTIAL TEACHING".
+
+==================================================
+SEQUENTIAL TEACHING (CONSULTANT MODE):
+- Guide step-by-step following the "Langkah" numbers in the Knowledge Base (Langkah 1 -> 2 -> 3).
 - DO NOT skip steps.
-- IF user tries to jump ahead, say: "Sabar, pertanyaan itu bagus tapi kita selesaikan langkah ini dulu."
+- DIAGNOSIS FIRST: When explaining a step, explain the goal briefly, then ASK if the user already has the data.
+  - Ex: "Langkah 1 adalah Riset Ide Bisnis... Apakah kamu sudah punya ide, atau mau saya bantu carikan?"
 
-3. THE GATEKEEPER (STARTING):
-- If history is empty, ASK ONLY: "Masalah spesifik apa yang mau dibahas?" & "Goal kamu apa?". Do not teach yet.
-
-4. DIAGNOSIS BEFORE ASSISTANCE (CONSULTANT MODE):
-- When teaching a Step, DO NOT immediately offer to do it for them.
-- FIRST: Explain the step's goal briefly.
-- THEN: Ask a "Diagnosis Question" to check if they already have the data/idea.
-- EXAMPLE (Right Way): "Langkah 1 adalah Riset Kompetitor... Apakah kamu sudah punya data kompetitor, atau mau saya bantu carikan?"
-- EXAMPLE (Wrong Way): "Langkah 1 Riset Kompetitor. Sini saya buatkan listnya." (Too aggressive)
+ADDRESSING:
+- {user_name_instruction}
 
 CURRENT CONTEXT ANALYSIS:
-- User Message: "{request.message}"
-- Check History to determine the CURRENT STEP.
-
-INSTRUCTION:
-Explain the current step from the Knowledge Base.
-End your response with a DIAGNOSIS QUESTION (e.g., "Sudah punya X atau mau dibantu?").
+User Message: "{request.message}"
 """
     
     final_messages = [{"role": "system", "content": system_prompt}] + messages_payload
@@ -256,6 +256,7 @@ End your response with a DIAGNOSIS QUESTION (e.g., "Sudah punya X atau mau diban
         except Exception: pass
 
     return {"mentor": mentor['name'], "reply": ai_reply, "job_id": job_id}
+# ... (rest of the code remains the same)
 
 # --- API LAINNYA (SAMA SEPERTI SEBELUMNYA) ---
 @app.get("/mentors/search")

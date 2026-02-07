@@ -494,3 +494,6 @@ async def update_profile(user_id: str, full_name: str = None, avatar_url: str = 
     data = {k: v for k, v in {"full_name": full_name, "avatar_url": avatar_url}.items() if v}
     if data: supabase.table("profiles").update(data).eq("id", user_id).execute()
     return {"status": "ok"}
+
+@app.get("/")
+def home(): return {"status": "AI Mentor SaaS Backend V11.0 (Single Step Enforced) Active"}

@@ -21,8 +21,8 @@ import pypdf
 load_dotenv()
 
 app = FastAPI(
-    title="AI Mentor SaaS Platform - V30 (Iron Gatekeeper)",
-    description="Backend AI Mentor V30. Enforces Mandatory Opening Questions strictly before any teaching."
+    title="AI Mentor SaaS Platform - V31 (Strict Scope & Shield)",
+    description="Backend AI Mentor V31. Adds Anti-OOT (Crypto/Politics) and Anti-Skip Logic."
 )
 
 app.add_middleware(
@@ -51,7 +51,7 @@ try:
         server_key=os.getenv("MIDTRANS_SERVER_KEY"),
         client_key=os.getenv("MIDTRANS_CLIENT_KEY")
     )
-    print("✅ System Ready: V30 (Iron Gatekeeper)")
+    print("✅ System Ready: V31 (Strict Scope & Shield)")
 except Exception as e:
     print(f"❌ Error Setup: {e}")
 
@@ -125,9 +125,9 @@ class DeleteDocsRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "AI Mentor Backend V30 Active"}
+    return {"status": "AI Mentor Backend V31 Active"}
 
-# --- API CHAT UTAMA (V30 IRON GATEKEEPER) ---
+# --- API CHAT UTAMA (V31 STRICT SCOPE) ---
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
     # 1. Cek Subscription
@@ -173,7 +173,7 @@ async def chat_with_mentor(request: ChatRequest):
             messages_payload.append({"role": role, "content": chat['message']})
 
     # ==============================================================================
-    # SYSTEM PROMPT V30 (IRON GATEKEEPER)
+    # SYSTEM PROMPT V31 (THE SNIPER SCOPE & SHIELD)
     # ==============================================================================
     
     user_name_instruction = ""
@@ -190,29 +190,29 @@ SOURCE OF TRUTH (KNOWLEDGE BASE):
 {knowledge_base}
 
 ==================================================
-PRIORITY PROTOCOL: THE IRON GATEKEEPER
-Before answering, you MUST perform this check:
+PROTOCOL 1: THE SHIELD (OUT OF DOMAIN BLOCKER)
+You must STRICTLY STICK to the Knowledge Base (PDF).
+IF the user asks about topics NOT in the Knowledge Base (e.g., Crypto, Politics, Health, Coding, Romance, General Chat):
+   - REJECT the question politely.
+   - SAY: "Maaf, keahlian saya spesifik membantu bisnis Anda sesuai panduan. Topik [topic] di luar kapasitas saya. Mari kembali ke langkah bisnis kita."
+   - DO NOT answer the OOT question, even if you know the answer.
 
-CHECK: Did the user ALREADY answer these 2 mandatory questions in the conversation history?
+PROTOCOL 2: THE ANCHOR (ANTI-SKIP SEQUENCE)
+You must detect "Future Steps".
+IF the user asks about a step far ahead (e.g., asking about "Promosi/Langkah 13" while you are still at "Langkah 2"):
+   - DETECT: "User is asking about Step X, but we are at Step Y."
+   - BLOCK: "Pertanyaan bagus. Tapi itu materi Langkah X. Agar bisnisnya kuat, kita harus selesaikan Langkah Y dulu."
+   - REDIRECT: Go back to the Current Step.
+
+PROTOCOL 3: THE IRON GATEKEEPER
+CHECK: Did the user ALREADY answer these 2 mandatory questions in history?
 1. "1 masalah spesifik apa yang mau kamu bahas?"
-2. "Goal kamu apa / kamu berharap hasilnya apa?"
+2. "Goal kamu apa?"
+IF "NO" -> STOP & ASK THEM. DO NOT TEACH YET.
 
-IF "NO" (User has NOT answered both):
-   - STOP immediately.
-   - DO NOT explain "Langkah 1" or "Ide Bisnis".
-   - DO NOT give advice.
-   - YOUR ONLY TASK: Ask the 2 mandatory questions above.
-   - Tone: Professional, welcoming, but firm on needing this info first.
-
-IF "YES" (User has answered both):
-   - PROCEED to "SEQUENTIAL TEACHING".
-
-==================================================
-SEQUENTIAL TEACHING (CONSULTANT MODE):
-- Guide step-by-step following the "Langkah" numbers in the Knowledge Base (Langkah 1 -> 2 -> 3).
-- DO NOT skip steps.
-- DIAGNOSIS FIRST: When explaining a step, explain the goal briefly, then ASK if the user already has the data.
-  - Ex: "Langkah 1 adalah Riset Ide Bisnis... Apakah kamu sudah punya ide, atau mau saya bantu carikan?"
+PROTOCOL 4: CONSULTANT DIAGNOSIS
+- When teaching a step, explain briefly -> THEN ASK if user has data.
+- Example: "Langkah 1 adalah X. Apakah kamu sudah punya datanya, atau mau saya bantu?"
 
 ADDRESSING:
 - {user_name_instruction}
@@ -256,7 +256,7 @@ User Message: "{request.message}"
         except Exception: pass
 
     return {"mentor": mentor['name'], "reply": ai_reply, "job_id": job_id}
-# ... (rest of the code remains the same)
+# ...
 
 # --- API LAINNYA (SAMA SEPERTI SEBELUMNYA) ---
 @app.get("/mentors/search")

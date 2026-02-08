@@ -6,7 +6,7 @@ import requests
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Query
+from fastapi import FastAPI, HTTPException, UploadFile, File, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -425,23 +425,42 @@ async def update_profile(user_id: str, full_name: str = None, avatar_url: str = 
     return {"status": "ok"}
 
 @app.post("/favorites/toggle")
-async def toggle_favorite(req: FavoriteRequest):
-    # Cek apakah sudah ada?
-    existing = supabase.table("favorites").select("*")\
-        .eq("user_id", req.user_id).eq("mentor_id", req.mentor_id).execute()
-    
-    if existing.data:
-        # Jika ada -> Hapus (Unlike)
-        supabase.table("favorites").delete()\
+async def toggle_favorite(req: FavoriteRequest, authorization: str = Header(None)):
+    # 1. Cek apakah ada token dikirim?
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Token")
+
+    # 2. Ambil token dari string "Bearer eyJhbGci..."
+    token = authorization.split(" ")[1]
+
+    # 3. Buat Client Supabase Khusus User Ini (Scoped Client)
+    # Kita gunakan URL & KEY standar (bisa Anon Key), TAPI kita timpa auth-nya pakai token user
+    user_supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    user_supabase.postgrest.auth(token) # <--- INI KUNCINYA (Login sebagai User)
+
+    # 4. Gunakan 'user_supabase' (bukan global 'supabase') untuk query
+    try:
+        # Cek apakah sudah ada?
+        existing = user_supabase.table("favorites").select("*")\
             .eq("user_id", req.user_id).eq("mentor_id", req.mentor_id).execute()
-        return {"status": "removed"}
-    else:
-        # Jika belum -> Tambah (Like)
-        supabase.table("favorites").insert({
-            "user_id": req.user_id, 
-            "mentor_id": req.mentor_id
-        }).execute()
-        return {"status": "added"}
+        
+        if existing.data:
+            # Hapus (Unlike)
+            user_supabase.table("favorites").delete()\
+                .eq("user_id", req.user_id).eq("mentor_id", req.mentor_id).execute()
+            return {"status": "removed"}
+        else:
+            # Tambah (Like)
+            user_supabase.table("favorites").insert({
+                "user_id": req.user_id, 
+                "mentor_id": req.mentor_id
+            }).execute()
+            return {"status": "added"}
+            
+    except Exception as e:
+        print(f"Error Toggle Favorite: {e}")
+        # Jika error 42501 (RLS), berarti token salah atau user tidak berhak
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/favorites/{user_id}")
 async def get_user_favorites(user_id: str):

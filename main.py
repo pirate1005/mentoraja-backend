@@ -463,12 +463,30 @@ async def toggle_favorite(req: FavoriteRequest, authorization: str = Header(None
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/favorites/{user_id}")
-async def get_user_favorites(user_id: str):
-    # Ambil data favorites sekaligus data mentor-nya (Join)
-    # Syntax select: favorites(*, mentors(*))
-    data = supabase.table("favorites").select("mentor_id, mentors(*)")\
-        .eq("user_id", user_id).execute()
-        
-    # Rapikan format return agar hanya list mentor
-    result = [item['mentors'] for item in data.data if item['mentors']]
-    return result
+async def get_user_favorites(user_id: str, authorization: str = Header(None)):
+    # 1. Cek Token
+    if not authorization:
+        # Jika tidak ada token, kembalikan kosong atau error
+        # Untuk keamanan, lebih baik return kosong saja atau raise 401
+        return []
+
+    try:
+        token = authorization.split(" ")[1]
+
+        # 2. Buat Client Supabase Khusus User Ini
+        user_supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        user_supabase.postgrest.auth(token) # Login sebagai User
+
+        # 3. Ambil data favorites menggunakan client user
+        # Syntax select: favorites(*, mentors(*))
+        data = user_supabase.table("favorites").select("mentor_id, mentors(*)")\
+            .eq("user_id", user_id).execute()
+            
+        # 4. Rapikan format return agar hanya list mentor
+        # Pastikan item['mentors'] tidak None sebelum dimasukkan
+        result = [item['mentors'] for item in data.data if item.get('mentors')]
+        return result
+
+    except Exception as e:
+        print(f"Error Fetch Favorites: {e}")
+        return []

@@ -3,7 +3,6 @@ import json
 import re
 import uuid
 import requests
-import base64
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -13,8 +12,6 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from groq import Groq
-import edge_tts
-import uuid
 import midtransclient
 import pypdf
 
@@ -288,36 +285,21 @@ async def chat_with_mentor(request: ChatRequest):
         "user_id": request.user_id, "mentor_id": request.mentor_id, "sender": "ai", "message": ai_reply
     }).execute()
 
-    audio_base64 = None
-    try:
-        # Pilih suara: "id-ID-ArdiNeural" (Cowok) atau "id-ID-GadisNeural" (Cewek)
-        VOICE = "id-ID-ArdiNeural"
-        
-        # Nama file sementara (unik biar gak bentrok antar user)
-        temp_filename = f"audio_{uuid.uuid4()}.mp3"
-        
-        # Generate Audio
-        communicate = edge_tts.Communicate(ai_reply, VOICE)
-        await communicate.save(temp_filename)
-        
-        # Baca file audio dan ubah jadi Base64 string
-        with open(temp_filename, "rb") as f:
-            audio_bytes = f.read()
-            audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
-            
-        # Hapus file sementara dari server (Wajib biar storage gak penuh)
-        os.remove(temp_filename)
-        
-    except Exception as e:
-        print(f"Error Edge TTS: {e}")
-        audio_base64 = None # Fallback: Jika error, kirim teks saja (frontend aman)
+    # Video Engine Trigger (Generate suara jika ada avatar)
+    job_id = None
+    if len(ai_reply) > 2 and mentor.get('avatar_url'):
+        try:
+            # Logic ElevenLabs (sama seperti sebelumnya)
+            audio_bytes = generate_elevenlabs_audio(ai_reply)
+            if audio_bytes:
+                filename = f"audio/{uuid.uuid4()}.mp3"
+                supabase.storage.from_("avatars").upload(filename, audio_bytes, {"content-type": "audio/mpeg"})
+                audio_url = supabase.storage.from_("avatars").get_public_url(filename)
+                res = supabase.table("avatar_jobs").insert({"status": "pending", "image_url": mentor['avatar_url'], "audio_url": audio_url}).execute()
+                if res.data: job_id = res.data[0]['id']
+        except Exception: pass
 
-    # Return data JSON ke Frontend
-    return {
-        "mentor": mentor['name'], 
-        "reply": ai_reply, 
-        "audio": audio_base64  # <--- Ini data audio yang akan diputar frontend
-    }
+    return {"mentor": mentor['name'], "reply": ai_reply, "job_id": job_id}
 
 # --- API LAINNYA (SAMA SEPERTI SEBELUMNYA) ---
 @app.get("/mentors/search")

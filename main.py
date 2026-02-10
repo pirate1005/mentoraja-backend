@@ -19,11 +19,12 @@ import pypdf
 # ==========================================
 # 1. SETUP SYSTEM & CONFIGURATION
 # ==========================================
+# Load environment variables dari file .env
 load_dotenv()
 
 app = FastAPI(
-    title="AI Mentor SaaS Platform - V36 (Dynamic Voice Cloning)",
-    description="Backend AI Mentor V36. Supports individual voice cloning per mentor."
+    title="AI Mentor SaaS Platform - V38 (Env Configured)",
+    description="Backend AI Mentor V38. Uses .env for configuration & Dynamic Voice."
 )
 
 app.add_middleware(
@@ -35,25 +36,32 @@ app.add_middleware(
 )
 
 try:
-    # --- SETUP CREDENTIALS ---
+    # --- SETUP CREDENTIALS DARI .ENV ---
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_KEY = os.getenv("SUPABASE_KEY")
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     
     # ElevenLabs Setup
     ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
-    # Default Voice ID (jika mentor belum punya suara sendiri)
-    DEFAULT_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM") 
+    # Default Voice ID dari .env (Dipakai jika mentor tidak punya suara khusus)
+    DEFAULT_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID") 
+
+    # Midtrans Setup
+    MIDTRANS_SERVER_KEY = os.getenv("MIDTRANS_SERVER_KEY")
+    MIDTRANS_CLIENT_KEY = os.getenv("MIDTRANS_CLIENT_KEY")
+    # Konversi string 'False'/'True' dari .env menjadi Boolean Python
+    is_prod_str = os.getenv("MIDTRANS_IS_PRODUCTION", "False").lower()
+    MIDTRANS_IS_PRODUCTION = is_prod_str == "true"
 
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     client = Groq(api_key=GROQ_API_KEY)
     
     snap = midtransclient.Snap(
-        is_production=False, 
-        server_key=os.getenv("MIDTRANS_SERVER_KEY"),
-        client_key=os.getenv("MIDTRANS_CLIENT_KEY")
+        is_production=MIDTRANS_IS_PRODUCTION, 
+        server_key=MIDTRANS_SERVER_KEY,
+        client_key=MIDTRANS_CLIENT_KEY
     )
-    print("✅ System Ready: V36 (Dynamic Voice Cloning)")
+    print("✅ System Ready: V38 (Env Configured)")
 except Exception as e:
     print(f"❌ Error Setup: {e}")
 
@@ -61,15 +69,19 @@ except Exception as e:
 # 2. HELPER FUNCTIONS
 # ==========================================
 
-# [MODIFIED] Menerima voice_id dinamis
+# [MODIFIED] Menerima voice_id dinamis, Fallback ke DEFAULT_VOICE_ID (.env)
 def generate_elevenlabs_audio(text: str, voice_id: str = None) -> bytes:
     if not ELEVENLABS_API_KEY: 
-        print("❌ ElevenLabs API Key missing")
+        print("❌ ElevenLabs API Key missing in .env")
         return None
     
-    # Gunakan voice_id mentor jika ada, kalau tidak pakai default
+    # Gunakan voice_id mentor jika ada, kalau tidak pakai default dari .env
     target_voice_id = voice_id if voice_id else DEFAULT_VOICE_ID
     
+    if not target_voice_id:
+        print("❌ No Voice ID found (Neither in DB nor .env)")
+        return None
+
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{target_voice_id}"
     
     headers = {
@@ -219,7 +231,7 @@ class FavoriteRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "AI Mentor Backend V36 Active"}
+    return {"status": "AI Mentor Backend V38 Active"}
 
 # --- API CHAT UTAMA ---
 @app.post("/chat")
@@ -321,10 +333,11 @@ async def chat_with_mentor(request: ChatRequest):
     video_base64 = None
     
     try:
-        # [MODIFIED] Gunakan Voice ID khusus mentor jika ada
+        # [MODIFIED] Gunakan Voice ID khusus mentor jika ada (dari database)
+        # Jika tidak ada di DB, helper function akan otomatis pakai DEFAULT dari .env
         mentor_voice_id = mentor.get('elevenlabs_voice_id')
         
-        # Panggil fungsi generate dengan voice_id spesifik
+        # Panggil fungsi generate
         audio_bytes = generate_elevenlabs_audio(ai_reply, voice_id=mentor_voice_id) 
         
         if audio_bytes:
@@ -333,7 +346,7 @@ async def chat_with_mentor(request: ChatRequest):
         print(f"Audio Generation Error: {e}")
 
     # 2. GENERATE VIDEO (Kirim ke Colab)
-    # GANTI URL INI DENGAN URL BARU DARI COLAB ANDA
+    # GANTI URL INI DENGAN URL BARU DARI COLAB ANDA SETIAP KALI START
     COLAB_API_URL = "https://0c7b-35-185-184-241.ngrok-free.app" 
     
     if audio_base64 and COLAB_API_URL and mentor.get('avatar_url'):
@@ -371,7 +384,7 @@ async def chat_with_mentor(request: ChatRequest):
     }
 
 # ==========================================
-# 🚀 NEW ENDPOINT: UPLOAD VOICE SAMPLE (CLONING)
+# 🚀 ENDPOINT: UPLOAD VOICE SAMPLE (CLONING)
 # ==========================================
 @app.post("/educator/upload-voice")
 async def upload_voice_sample(mentor_id: int, file: UploadFile = File(...)):
@@ -404,7 +417,7 @@ async def upload_voice_sample(mentor_id: int, file: UploadFile = File(...)):
         os.remove(temp_filename)
 
         if not new_voice_id:
-             raise HTTPException(status_code=500, detail="Gagal meng-clone suara di ElevenLabs")
+             raise HTTPException(status_code=500, detail="Gagal meng-clone suara di ElevenLabs (Cek Kuota/Tier)")
 
         # 5. Update Database Mentor dengan Voice ID baru
         # Pastikan kolom 'elevenlabs_voice_id' sudah ada di tabel mentors!
@@ -420,7 +433,7 @@ async def upload_voice_sample(mentor_id: int, file: UploadFile = File(...)):
         print(f"❌ Upload Voice Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- API LAINNYA (TIDAK BERUBAH) ---
+# --- API LAINNYA ---
 @app.get("/mentors/search")
 async def search_mentors(keyword: str = None):
     query = supabase.table("mentors").select("*").eq("is_active", True)

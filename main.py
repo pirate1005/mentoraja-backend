@@ -3,11 +3,10 @@ import json
 import re
 import uuid
 import requests
-import base64
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Query, Header, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -19,12 +18,11 @@ import pypdf
 # ==========================================
 # 1. SETUP SYSTEM & CONFIGURATION
 # ==========================================
-# Load environment variables dari file .env
 load_dotenv()
 
 app = FastAPI(
-    title="AI Mentor SaaS Platform - V38 (Env Configured)",
-    description="Backend AI Mentor V38. Uses .env for configuration & Dynamic Voice."
+    title="AI Mentor SaaS Platform - V34 (Strict Step Enforcer)",
+    description="Backend AI Mentor V34. Enforces strict step-by-step progression. Prevents jumping ahead."
 )
 
 app.add_middleware(
@@ -36,146 +34,39 @@ app.add_middleware(
 )
 
 try:
-    # --- SETUP CREDENTIALS DARI .ENV ---
+    # --- SETUP CREDENTIALS ---
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_KEY = os.getenv("SUPABASE_KEY")
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     
     # ElevenLabs Setup
     ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
-    # Default Voice ID dari .env (Dipakai jika mentor tidak punya suara khusus)
-    DEFAULT_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID") 
-
-    # Midtrans Setup
-    MIDTRANS_SERVER_KEY = os.getenv("MIDTRANS_SERVER_KEY")
-    MIDTRANS_CLIENT_KEY = os.getenv("MIDTRANS_CLIENT_KEY")
-    # Konversi string 'False'/'True' dari .env menjadi Boolean Python
-    is_prod_str = os.getenv("MIDTRANS_IS_PRODUCTION", "False").lower()
-    MIDTRANS_IS_PRODUCTION = is_prod_str == "true"
+    ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM") 
 
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     client = Groq(api_key=GROQ_API_KEY)
     
     snap = midtransclient.Snap(
-        is_production=MIDTRANS_IS_PRODUCTION, 
-        server_key=MIDTRANS_SERVER_KEY,
-        client_key=MIDTRANS_CLIENT_KEY
+        is_production=False, 
+        server_key=os.getenv("MIDTRANS_SERVER_KEY"),
+        client_key=os.getenv("MIDTRANS_CLIENT_KEY")
     )
-    print("✅ System Ready: V38 (Env Configured)")
+    print("✅ System Ready: V34 (Strict Step Enforcer)")
 except Exception as e:
     print(f"❌ Error Setup: {e}")
 
 # ==========================================
 # 2. HELPER FUNCTIONS
 # ==========================================
-
-# [MODIFIED] Menerima voice_id dinamis, Fallback ke DEFAULT_VOICE_ID (.env)
-def generate_elevenlabs_audio(text: str, voice_id: str = None) -> bytes:
-    if not ELEVENLABS_API_KEY: 
-        print("❌ ElevenLabs API Key missing in .env")
-        return None
-    
-    # Gunakan voice_id mentor jika ada, kalau tidak pakai default dari .env
-    target_voice_id = voice_id if voice_id else DEFAULT_VOICE_ID
-    
-    if not target_voice_id:
-        print("❌ No Voice ID found (Neither in DB nor .env)")
-        return None
-
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{target_voice_id}"
-    
-    headers = {
-        "Accept": "audio/mpeg", 
-        "Content-Type": "application/json", 
-        "xi-api-key": ELEVENLABS_API_KEY
-    }
-    
-    data = {
-        "text": text[:1000], # Batasi karakter biar hemat kuota
-        "model_id": "eleven_multilingual_v2", 
-        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
-    }
-    
+def generate_elevenlabs_audio(text: str) -> bytes:
+    if not ELEVENLABS_API_KEY: return None
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
+    headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}
+    data = {"text": text[:1000], "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
     try:
         response = requests.post(url, json=data, headers=headers)
-        if response.status_code == 200:
-            return response.content
-        else:
-            print(f"❌ ElevenLabs Error ({target_voice_id}): {response.text}")
-            return None
-    except Exception as e: 
-        print(f"❌ ElevenLabs Exception: {e}")
-        return None
-
-# [NEW] Fungsi untuk clone suara via API ElevenLabs
-def clone_voice_elevenlabs(name: str, file_path: str) -> str:
-    if not ELEVENLABS_API_KEY: return None
-    
-    url = "https://api.elevenlabs.io/v1/voices/add"
-    headers = {"xi-api-key": ELEVENLABS_API_KEY}
-    
-    # Multipart form data
-    try:
-        with open(file_path, "rb") as f:
-            files = {
-                "files": (os.path.basename(file_path), f, "audio/mpeg")
-            }
-            data = {
-                "name": f"Mentor-{name}-{uuid.uuid4().hex[:6]}", # Nama unik
-                "description": f"Voice clone for mentor {name}"
-            }
-            response = requests.post(url, headers=headers, data=data, files=files)
-            
-            if response.status_code == 200:
-                return response.json().get("voice_id")
-            else:
-                print(f"❌ Clone Error: {response.text}")
-                return None
-    except Exception as e:
-        print(f"❌ Clone Exception: {e}")
-        return None
-
-def analyze_chat_phase(history: List[dict]) -> dict:
-    """
-    Menganalisa history untuk menentukan User ada di Fase apa.
-    Mengembalikan dict berisi instruksi khusus untuk AI.
-    """
-    user_messages = [m['message'] for m in history if m['sender'] == 'user']
-    ai_messages = [m['message'] for m in history if m['sender'] == 'ai']
-    
-    # --- FASE 1: OPENING WAJIB (Logic PDF Poin 1) ---
-    if len(user_messages) < 2:
-        return {
-            "phase": "OPENING",
-            "instruction": """
-            STATUS: FASE OPENING (Awal Sesi).
-            TUGAS UTAMA: Kamu WAJIB mendapatkan jawaban untuk 2 pertanyaan ini sebelum lanjut:
-            1. "1 masalah spesifik apa yang mau kamu bahas?"
-            2. "Goal kamu apa / kamu berharap hasilnya apa?"
-            
-            JANGAN MENGAJAR APAPUN DULU. Fokus hanya pada mendapatkan 2 jawaban ini.
-            Jika user baru menjawab satu, minta yang satunya lagi.
-            """
-        }
-    
-    # --- FASE 2: MENTORING (Logic PDF Poin 2, 3, 4, 5) ---
-    else:
-        context_summary = f"User Problem: {user_messages[0] if user_messages else 'Unknown'}. User Goal: {user_messages[1] if len(user_messages)>1 else 'Unknown'}."
-        
-        return {
-            "phase": "MENTORING",
-            "instruction": f"""
-            STATUS: FASE MENTORING (Step-by-Step Teaching).
-            CONTEXT: {context_summary}
-            
-            ATURAN FATAL (JANGAN DILANGGAR):
-            1. **DILARANG BERTANYA LAGI** "Apa masalahmu?" atau "Apa goalmu?". User SUDAH menjawabnya. Anggap kamu sudah tahu.
-            2. Mulailah mengajar langkah demi langkah (Step 1, lalu Step 2, dst) sesuai KNOWLEDGE BASE.
-            3. **JANGAN SKIP LANGKAH.** Ajarkan SATU langkah, lalu minta data/konfirmasi user, baru lanjut ke langkah berikutnya.
-            4. Jika user bertanya hal di luar langkah saat ini, TOLAK dengan sopan: "Sabar ya, pertanyaan kamu itu penting dan akan kita bahas nanti. Tapi biar hasilnya akurat, kita bahas satu per satu dulu." (Sesuai Logic Poin 5).
-            5. Di setiap langkah, minta DATA dari user. Jika user tidak punya data, tawarkan bantuan hitung (Sesuai Logic Poin 3).
-            """
-        }
+        return response.content if response.status_code == 200 else None
+    except: return None
 
 # ==========================================
 # 3. DATA MODELS
@@ -209,11 +100,18 @@ class MentorSettingsRequest(BaseModel):
     account_holder: str
     price: int
 
+class AdminUpdateUserRequest(BaseModel):
+    full_name: str
+    role: str
+
 class PayoutRequestModel(BaseModel):
     mentor_id: int
     amount: int
     bank_info: str 
 
+class DiscoveryInput(BaseModel):
+    user_goal: str
+    
 class DeleteChatRequest(BaseModel):
     user_id: str
     mentor_id: int
@@ -231,12 +129,66 @@ class FavoriteRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "AI Mentor Backend V38 Active"}
+    return {"status": "AI Mentor Backend V34 Active"}
 
-# --- API CHAT UTAMA ---
+# --- API CHAT UTAMA (V34 STRICT ENFORCER) ---
+# ==========================================
+# 5. LOGIC & STATE MANAGEMENT (THE BRAIN)
+# ==========================================
+
+def analyze_chat_phase(history: List[dict]) -> dict:
+    """
+    Menganalisa history untuk menentukan User ada di Fase apa.
+    Mengembalikan dict berisi instruksi khusus untuk AI.
+    """
+    user_messages = [m['message'] for m in history if m['sender'] == 'user']
+    ai_messages = [m['message'] for m in history if m['sender'] == 'ai']
+    
+    # --- FASE 1: OPENING WAJIB (Logic PDF Poin 1) ---
+    # Jika percakapan masih sangat pendek (kurang dari 2 balasan user), 
+    # kita asumsikan user belum selesai menjawab 2 pertanyaan emas.
+    if len(user_messages) < 2:
+        return {
+            "phase": "OPENING",
+            "instruction": """
+            STATUS: FASE OPENING (Awal Sesi).
+            TUGAS UTAMA: Kamu WAJIB mendapatkan jawaban untuk 2 pertanyaan ini sebelum lanjut:
+            1. "1 masalah spesifik apa yang mau kamu bahas?"
+            2. "Goal kamu apa / kamu berharap hasilnya apa?"
+            
+            JANGAN MENGAJAR APAPUN DULU. Fokus hanya pada mendapatkan 2 jawaban ini.
+            Jika user baru menjawab satu, minta yang satunya lagi.
+            """
+        }
+    
+    # --- FASE 2: MENTORING (Logic PDF Poin 2, 3, 4, 5) ---
+    # Jika user sudah chat lebih dari 2 kali, kita ANGGAP dia sudah lolos opening.
+    # Kita kunci AI agar TIDAK BOLEH tanya opening lagi.
+    else:
+        # Ambil ringkasan jawaban user dari chat awal untuk konteks
+        context_summary = f"User Problem: {user_messages[0] if user_messages else 'Unknown'}. User Goal: {user_messages[1] if len(user_messages)>1 else 'Unknown'}."
+        
+        return {
+            "phase": "MENTORING",
+            "instruction": f"""
+            STATUS: FASE MENTORING (Step-by-Step Teaching).
+            CONTEXT: {context_summary}
+            
+            ATURAN FATAL (JANGAN DILANGGAR):
+            1. **DILARANG BERTANYA LAGI** "Apa masalahmu?" atau "Apa goalmu?". User SUDAH menjawabnya. Anggap kamu sudah tahu.
+            2. Mulailah mengajar langkah demi langkah (Step 1, lalu Step 2, dst) sesuai KNOWLEDGE BASE.
+            3. **JANGAN SKIP LANGKAH.** Ajarkan SATU langkah, lalu minta data/konfirmasi user, baru lanjut ke langkah berikutnya.
+            4. Jika user bertanya hal di luar langkah saat ini, TOLAK dengan sopan: "Sabar ya, pertanyaan kamu itu penting dan akan kita bahas nanti. Tapi biar hasilnya akurat, kita bahas satu per satu dulu." (Sesuai Logic Poin 5).
+            5. Di setiap langkah, minta DATA dari user. Jika user tidak punya data, tawarkan bantuan hitung (Sesuai Logic Poin 3).
+            """
+        }
+
+# ==========================================
+# ENDPOINT CHAT UTAMA
+# ==========================================
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
-    # 1. Cek Subscription
+    # 1. Cek Subscription (Sama seperti sebelumnya)
     now_str = datetime.now().isoformat()
     sub_check = supabase.table("subscriptions").select("*")\
         .eq("user_id", request.user_id)\
@@ -246,17 +198,17 @@ async def chat_with_mentor(request: ChatRequest):
         .execute()
     is_subscribed = len(sub_check.data) > 0
     
-    # 2. Cek Limit
-    # history_count = supabase.table("chat_history").select("id", count="exact")\
-    #    .eq("user_id", request.user_id).eq("mentor_id", request.mentor_id).eq("sender", "user").execute()
-    # user_chat_count = history_count.count if history_count.count else 0
-    # if not is_subscribed and user_chat_count >= 5:
-    #    return {"reply": "LIMIT_REACHED", "mentor": "System", "usage": user_chat_count}
+    # 2. Cek Limit (Sama seperti sebelumnya)
+    history_count = supabase.table("chat_history").select("id", count="exact")\
+        .eq("user_id", request.user_id).eq("mentor_id", request.mentor_id).eq("sender", "user").execute()
+    user_chat_count = history_count.count if history_count.count else 0
+    
+    if not is_subscribed and user_chat_count >= 5:
+        return {"reply": "LIMIT_REACHED", "mentor": "System", "usage": user_chat_count}
 
     # 3. Data Mentor & KB
     mentor_data = supabase.table("mentors").select("*").eq("id", request.mentor_id).single().execute()
-    # [MODIFIED] Ambil juga field 'elevenlabs_voice_id'
-    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "expertise": "General", "avatar_url": None, "elevenlabs_voice_id": None}
+    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "expertise": "General", "avatar_url": None}
     
     docs = supabase.table("mentor_docs").select("content").eq("mentor_id", request.mentor_id).execute()
     knowledge_base = "\n\n".join([d['content'] for d in docs.data])
@@ -267,21 +219,28 @@ async def chat_with_mentor(request: ChatRequest):
     }).execute()
 
     # 5. Fetch History
+    # Kita ambil lebih banyak history (misal 20) agar AI benar-benar ingat konteks awal
     past_chats_raw = supabase.table("chat_history").select("sender, message")\
         .eq("user_id", request.user_id).eq("mentor_id", request.mentor_id)\
         .order("created_at", desc=True).limit(20).execute().data 
-    past_chats_raw.reverse()
     
-    # --- LOGIC PENGENDALI ---
+    past_chats_raw.reverse() # Urutkan dari lama ke baru (Kronologis)
+    
+    # --- LOGIC PENGENDALI (THE BRAIN) ---
+    # Analisa fase user berdasarkan history chat
     chat_state = analyze_chat_phase(past_chats_raw)
     
     messages_payload = []
     for chat in past_chats_raw:
         role = "user" if chat['sender'] == "user" else "assistant"
+        # Hindari duplikasi pesan terakhir
         if chat['message'] != request.message: 
             messages_payload.append({"role": role, "content": chat['message']})
 
-    # PROMPT LOGIC
+    # ==============================================================================
+    # SYSTEM PROMPT V35 (STRICT PDF ENFORCER)
+    # ==============================================================================
+    
     user_name_instruction = f"Panggil user dengan nama '{request.user_first_name}'." if request.user_first_name else "Panggil user dengan sopan."
 
     system_prompt = f"""
@@ -313,7 +272,7 @@ async def chat_with_mentor(request: ChatRequest):
         completion = client.chat.completions.create(
             messages=final_messages,
             model="llama-3.3-70b-versatile",
-            temperature=0.2,
+            temperature=0.2, # Rendah agar patuh pada instruksi
             max_tokens=800, 
         )
         ai_reply = completion.choices[0].message.content
@@ -326,114 +285,23 @@ async def chat_with_mentor(request: ChatRequest):
         "user_id": request.user_id, "mentor_id": request.mentor_id, "sender": "ai", "message": ai_reply
     }).execute()
 
-    # ==============================================================================
-    # 🚀 VIDEO & VOICE ENGINE (DYNAMIC VOICE PER MENTOR)
-    # ==============================================================================
-    audio_base64 = None
-    video_base64 = None
-    
-    try:
-        # [MODIFIED] Gunakan Voice ID khusus mentor jika ada (dari database)
-        # Jika tidak ada di DB, helper function akan otomatis pakai DEFAULT dari .env
-        mentor_voice_id = mentor.get('elevenlabs_voice_id')
-        
-        # Panggil fungsi generate
-        audio_bytes = generate_elevenlabs_audio(ai_reply, voice_id=mentor_voice_id) 
-        
-        if audio_bytes:
-            audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
-    except Exception as e:
-        print(f"Audio Generation Error: {e}")
-
-    # 2. GENERATE VIDEO (Kirim ke Colab)
-    # GANTI URL INI DENGAN URL BARU DARI COLAB ANDA SETIAP KALI START
-    COLAB_API_URL = "https://0c7b-35-185-184-241.ngrok-free.app" 
-    
-    if audio_base64 and COLAB_API_URL and mentor.get('avatar_url'):
+    # Video Engine Trigger (Generate suara jika ada avatar)
+    job_id = None
+    if len(ai_reply) > 2 and mentor.get('avatar_url'):
         try:
-            # print("⏳ Mengirim request ke Colab...")
-            colab_payload = {
-                "audio_base64": audio_base64,
-                "image_url": mentor['avatar_url']
-            }
-            
-            response = requests.post(
-                f"{COLAB_API_URL}/generate_video", 
-                json=colab_payload, 
-                timeout=120 
-            )
-            
-            if response.status_code == 200:
-                colab_data = response.json()
-                if colab_data.get("status") == "success":
-                    video_base64 = colab_data.get("video_base64")
-                    # print("✅ Video berhasil dibuat oleh Colab!")
-                else:
-                    print(f"❌ Colab Error Message: {colab_data.get('message')}")
-            else:
-                print(f"❌ Gagal connect Colab: Status {response.status_code}")
-                
-        except Exception as e:
-            print(f"❌ Error request ke Colab: {e}")
+            # Logic ElevenLabs (sama seperti sebelumnya)
+            audio_bytes = generate_elevenlabs_audio(ai_reply)
+            if audio_bytes:
+                filename = f"audio/{uuid.uuid4()}.mp3"
+                supabase.storage.from_("avatars").upload(filename, audio_bytes, {"content-type": "audio/mpeg"})
+                audio_url = supabase.storage.from_("avatars").get_public_url(filename)
+                res = supabase.table("avatar_jobs").insert({"status": "pending", "image_url": mentor['avatar_url'], "audio_url": audio_url}).execute()
+                if res.data: job_id = res.data[0]['id']
+        except Exception: pass
 
-    return {
-        "mentor": mentor['name'], 
-        "reply": ai_reply, 
-        "audio": audio_base64, 
-        "video": video_base64
-    }
+    return {"mentor": mentor['name'], "reply": ai_reply, "job_id": job_id}
 
-# ==========================================
-# 🚀 ENDPOINT: UPLOAD VOICE SAMPLE (CLONING)
-# ==========================================
-@app.post("/educator/upload-voice")
-async def upload_voice_sample(mentor_id: int, file: UploadFile = File(...)):
-    """
-    Mentor mengupload file audio (MP3/WAV).
-    Sistem mengirimnya ke ElevenLabs untuk di-clone.
-    Voice ID baru disimpan ke tabel mentors.
-    """
-    try:
-        # 1. Validasi file
-        if not file.filename.endswith(('.mp3', '.wav', '.m4a')):
-             raise HTTPException(status_code=400, detail="Format audio harus MP3, WAV, atau M4A")
-
-        # 2. Ambil nama mentor untuk label voice
-        mentor_data = supabase.table("mentors").select("name").eq("id", mentor_id).single().execute()
-        if not mentor_data.data:
-             raise HTTPException(status_code=404, detail="Mentor tidak ditemukan")
-        mentor_name = mentor_data.data['name']
-
-        # 3. Simpan file sementara di server
-        temp_filename = f"temp_voice_{uuid.uuid4()}.mp3"
-        with open(temp_filename, "wb") as buffer:
-            buffer.write(await file.read())
-
-        # 4. Kirim ke ElevenLabs untuk Cloning
-        print(f"⏳ Cloning voice for {mentor_name}...")
-        new_voice_id = clone_voice_elevenlabs(mentor_name, temp_filename)
-        
-        # Hapus file temp
-        os.remove(temp_filename)
-
-        if not new_voice_id:
-             raise HTTPException(status_code=500, detail="Gagal meng-clone suara di ElevenLabs (Cek Kuota/Tier)")
-
-        # 5. Update Database Mentor dengan Voice ID baru
-        # Pastikan kolom 'elevenlabs_voice_id' sudah ada di tabel mentors!
-        supabase.table("mentors").update({
-            "elevenlabs_voice_id": new_voice_id,
-            "voice_sample_url": "Uploaded to ElevenLabs" # Opsional: Tandai status
-        }).eq("id", mentor_id).execute()
-
-        print(f"✅ Voice Cloned Successfully! ID: {new_voice_id}")
-        return {"status": "success", "voice_id": new_voice_id, "message": "Suara berhasil dikloning dan siap digunakan."}
-
-    except Exception as e:
-        print(f"❌ Upload Voice Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# --- API LAINNYA ---
+# --- API LAINNYA (SAMA SEPERTI SEBELUMNYA) ---
 @app.get("/mentors/search")
 async def search_mentors(keyword: str = None):
     query = supabase.table("mentors").select("*").eq("is_active", True)
@@ -495,16 +363,34 @@ async def reset_mentor_docs(req: DeleteDocsRequest):
 
 @app.post("/payment/create")
 async def create_payment(req: PaymentRequest):
+    # 1. Ambil harga per jam mentor dari database
     mentor = supabase.table("mentors").select("price_per_month").eq("id", req.mentor_id).single().execute()
+    
+    # Asumsi: kolom 'price_per_month' di DB sekarang dianggap sebagai 'price_per_hour'
     price_per_hour = mentor.data['price_per_month'] 
+    
+    # 2. Hitung Total Bayar (Harga x Jam)
     gross_amount = price_per_hour * req.duration_hours
+    
+    # 3. Hitung Fee Platform (10%)
     fee = int(gross_amount * 0.1)
     net_amount = gross_amount - fee
+    
+    # 4. Buat Order ID Unik (Tambahkan durasi di metadata jika perlu)
+    # Format: SUB-{UserID}-{Time}-{Duration}
     order_id = f"SUB-{req.user_id[:4]}-{datetime.now().strftime('%d%H%M%S')}-{req.duration_hours}"
 
+    # 5. Request ke Midtrans
     transaction_params = {
-        "transaction_details": {"order_id": order_id, "gross_amount": gross_amount},
-        "customer_details": {"first_name": req.first_name, "email": req.email},
+        "transaction_details": {
+            "order_id": order_id, 
+            "gross_amount": gross_amount
+        },
+        "customer_details": {
+            "first_name": req.first_name, 
+            "email": req.email
+        },
+        # PENTING: Kirim durasi via custom_field agar webhook tahu berapa jam yg dibeli
         "custom_field1": str(req.duration_hours), 
         "custom_field2": req.user_id,
         "custom_field3": str(req.mentor_id)
@@ -512,6 +398,8 @@ async def create_payment(req: PaymentRequest):
     
     transaction = snap.create_transaction(transaction_params)
     
+    # 6. Simpan ke Database (Status: Pending)
+    # Kita simpan dulu durasi/hours yg dibeli, tapi start_date & expires_at nanti pas settlement
     supabase.table("subscriptions").insert({
         "user_id": req.user_id, 
         "mentor_id": req.mentor_id, 
@@ -520,6 +408,7 @@ async def create_payment(req: PaymentRequest):
         "net_amount": net_amount, 
         "platform_fee_amount": fee, 
         "status": "pending"
+        # Note: start_date & expires_at masih NULL
     }).execute()
     
     return {"token": transaction['token'], "redirect_url": transaction['redirect_url']}
@@ -530,23 +419,32 @@ async def midtrans_notification(n: dict):
     order_id = n.get('order_id')
     
     if transaction_status in ['capture', 'settlement']:
+        # 1. Tentukan Waktu Mulai (Sekarang)
         start_time = datetime.now()
+        
+        # 2. Ambil Durasi Pembelian
+        # Cara A: Parsing dari Order ID (jika formatnya SUB-USER-TIME-DURATION)
+        # Cara B: Ambil default 1 jam (jika logic parsing ribet)
         try:
             parts = order_id.split('-')
-            duration_hours = int(parts[-1])
+            duration_hours = int(parts[-1]) # Mengambil angka terakhir dari Order ID
         except:
-            duration_hours = 1
+            duration_hours = 1 # Default fallback
             
+        # 3. Hitung Waktu Habis (Start + Duration)
         expiry_time = start_time + timedelta(hours=duration_hours)
         
+        # 4. Update Database
         supabase.table("subscriptions").update({
             "status": "settlement",
             "start_date": start_time.isoformat(),
-            "expires_at": expiry_time.isoformat()
+            "expires_at": expiry_time.isoformat() # <--- PENTING!
         }).eq("midtrans_order_id", order_id).execute()
         
     elif transaction_status in ['deny', 'cancel', 'expire']:
-        supabase.table("subscriptions").update({"status": "failed"}).eq("midtrans_order_id", order_id).execute()
+        supabase.table("subscriptions").update({
+            "status": "failed"
+        }).eq("midtrans_order_id", order_id).execute()
         
     return {"status": "ok"}
 
@@ -558,32 +456,67 @@ async def update_profile(user_id: str, full_name: str = None, avatar_url: str = 
 
 @app.post("/favorites/toggle")
 async def toggle_favorite(req: FavoriteRequest, authorization: str = Header(None)):
-    if not authorization: raise HTTPException(status_code=401, detail="Missing Token")
-    token = authorization.split(" ")[1]
-    user_supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    user_supabase.postgrest.auth(token) 
+    # 1. Cek apakah ada token dikirim?
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Token")
 
+    # 2. Ambil token dari string "Bearer eyJhbGci..."
+    token = authorization.split(" ")[1]
+
+    # 3. Buat Client Supabase Khusus User Ini (Scoped Client)
+    # Kita gunakan URL & KEY standar (bisa Anon Key), TAPI kita timpa auth-nya pakai token user
+    user_supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    user_supabase.postgrest.auth(token) # <--- INI KUNCINYA (Login sebagai User)
+
+    # 4. Gunakan 'user_supabase' (bukan global 'supabase') untuk query
     try:
-        existing = user_supabase.table("favorites").select("*").eq("user_id", req.user_id).eq("mentor_id", req.mentor_id).execute()
+        # Cek apakah sudah ada?
+        existing = user_supabase.table("favorites").select("*")\
+            .eq("user_id", req.user_id).eq("mentor_id", req.mentor_id).execute()
+        
         if existing.data:
-            user_supabase.table("favorites").delete().eq("user_id", req.user_id).eq("mentor_id", req.mentor_id).execute()
+            # Hapus (Unlike)
+            user_supabase.table("favorites").delete()\
+                .eq("user_id", req.user_id).eq("mentor_id", req.mentor_id).execute()
             return {"status": "removed"}
         else:
-            user_supabase.table("favorites").insert({"user_id": req.user_id, "mentor_id": req.mentor_id}).execute()
+            # Tambah (Like)
+            user_supabase.table("favorites").insert({
+                "user_id": req.user_id, 
+                "mentor_id": req.mentor_id
+            }).execute()
             return {"status": "added"}
+            
     except Exception as e:
+        print(f"Error Toggle Favorite: {e}")
+        # Jika error 42501 (RLS), berarti token salah atau user tidak berhak
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/favorites/{user_id}")
 async def get_user_favorites(user_id: str, authorization: str = Header(None)):
-    if not authorization: return []
+    # 1. Cek Token
+    if not authorization:
+        # Jika tidak ada token, kembalikan kosong atau error
+        # Untuk keamanan, lebih baik return kosong saja atau raise 401
+        return []
+
     try:
         token = authorization.split(" ")[1]
+
+        # 2. Buat Client Supabase Khusus User Ini
         user_supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-        user_supabase.postgrest.auth(token)
-        data = user_supabase.table("favorites").select("mentor_id, mentors(*)").eq("user_id", user_id).execute()
+        user_supabase.postgrest.auth(token) # Login sebagai User
+
+        # 3. Ambil data favorites menggunakan client user
+        # Syntax select: favorites(*, mentors(*))
+        data = user_supabase.table("favorites").select("mentor_id, mentors(*)")\
+            .eq("user_id", user_id).execute()
+            
+        # 4. Rapikan format return agar hanya list mentor
+        # Pastikan item['mentors'] tidak None sebelum dimasukkan
         result = [item['mentors'] for item in data.data if item.get('mentors')]
         return result
+
     except Exception as e:
         print(f"Error Fetch Favorites: {e}")
         return []

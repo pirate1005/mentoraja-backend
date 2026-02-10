@@ -132,22 +132,73 @@ def home():
     return {"status": "AI Mentor Backend V34 Active"}
 
 # --- API CHAT UTAMA (V34 STRICT ENFORCER) ---
+# ==========================================
+# 5. LOGIC & STATE MANAGEMENT (THE BRAIN)
+# ==========================================
+
+def analyze_chat_phase(history: List[dict]) -> dict:
+    """
+    Menganalisa history untuk menentukan User ada di Fase apa.
+    Mengembalikan dict berisi instruksi khusus untuk AI.
+    """
+    user_messages = [m['message'] for m in history if m['sender'] == 'user']
+    ai_messages = [m['message'] for m in history if m['sender'] == 'ai']
+    
+    # --- FASE 1: OPENING WAJIB (Logic PDF Poin 1) ---
+    # Jika percakapan masih sangat pendek (kurang dari 2 balasan user), 
+    # kita asumsikan user belum selesai menjawab 2 pertanyaan emas.
+    if len(user_messages) < 2:
+        return {
+            "phase": "OPENING",
+            "instruction": """
+            STATUS: FASE OPENING (Awal Sesi).
+            TUGAS UTAMA: Kamu WAJIB mendapatkan jawaban untuk 2 pertanyaan ini sebelum lanjut:
+            1. "1 masalah spesifik apa yang mau kamu bahas?"
+            2. "Goal kamu apa / kamu berharap hasilnya apa?"
+            
+            JANGAN MENGAJAR APAPUN DULU. Fokus hanya pada mendapatkan 2 jawaban ini.
+            Jika user baru menjawab satu, minta yang satunya lagi.
+            """
+        }
+    
+    # --- FASE 2: MENTORING (Logic PDF Poin 2, 3, 4, 5) ---
+    # Jika user sudah chat lebih dari 2 kali, kita ANGGAP dia sudah lolos opening.
+    # Kita kunci AI agar TIDAK BOLEH tanya opening lagi.
+    else:
+        # Ambil ringkasan jawaban user dari chat awal untuk konteks
+        context_summary = f"User Problem: {user_messages[0] if user_messages else 'Unknown'}. User Goal: {user_messages[1] if len(user_messages)>1 else 'Unknown'}."
+        
+        return {
+            "phase": "MENTORING",
+            "instruction": f"""
+            STATUS: FASE MENTORING (Step-by-Step Teaching).
+            CONTEXT: {context_summary}
+            
+            ATURAN FATAL (JANGAN DILANGGAR):
+            1. **DILARANG BERTANYA LAGI** "Apa masalahmu?" atau "Apa goalmu?". User SUDAH menjawabnya. Anggap kamu sudah tahu.
+            2. Mulailah mengajar langkah demi langkah (Step 1, lalu Step 2, dst) sesuai KNOWLEDGE BASE.
+            3. **JANGAN SKIP LANGKAH.** Ajarkan SATU langkah, lalu minta data/konfirmasi user, baru lanjut ke langkah berikutnya.
+            4. Jika user bertanya hal di luar langkah saat ini, TOLAK dengan sopan: "Sabar ya, pertanyaan kamu itu penting dan akan kita bahas nanti. Tapi biar hasilnya akurat, kita bahas satu per satu dulu." (Sesuai Logic Poin 5).
+            5. Di setiap langkah, minta DATA dari user. Jika user tidak punya data, tawarkan bantuan hitung (Sesuai Logic Poin 3).
+            """
+        }
+
+# ==========================================
+# ENDPOINT CHAT UTAMA
+# ==========================================
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
-    # 1. Cek Subscription
+    # 1. Cek Subscription (Sama seperti sebelumnya)
     now_str = datetime.now().isoformat()
-    
-    # Cari langganan yang status='settlement' DAN expires_at-nya masih di masa depan
     sub_check = supabase.table("subscriptions").select("*")\
         .eq("user_id", request.user_id)\
         .eq("mentor_id", request.mentor_id)\
         .eq("status", "settlement")\
         .gt("expires_at", now_str)\
         .execute()
-        
     is_subscribed = len(sub_check.data) > 0
     
-    # 2. Cek Limit
+    # 2. Cek Limit (Sama seperti sebelumnya)
     history_count = supabase.table("chat_history").select("id", count="exact")\
         .eq("user_id", request.user_id).eq("mentor_id", request.mentor_id).eq("sender", "user").execute()
     user_chat_count = history_count.count if history_count.count else 0
@@ -157,13 +208,10 @@ async def chat_with_mentor(request: ChatRequest):
 
     # 3. Data Mentor & KB
     mentor_data = supabase.table("mentors").select("*").eq("id", request.mentor_id).single().execute()
-    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "personality": "Expert Advisor", "expertise": "General", "avatar_url": None}
+    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "expertise": "General", "avatar_url": None}
     
     docs = supabase.table("mentor_docs").select("content").eq("mentor_id", request.mentor_id).execute()
     knowledge_base = "\n\n".join([d['content'] for d in docs.data])
-    
-    if not knowledge_base:
-        knowledge_base = "Guidelines: 1. Ask Problem & Goal. 2. Teach steps sequentially."
 
     # 4. Simpan Chat User
     supabase.table("chat_history").insert({
@@ -171,69 +219,50 @@ async def chat_with_mentor(request: ChatRequest):
     }).execute()
 
     # 5. Fetch History
-    past_chats = supabase.table("chat_history").select("sender, message")\
+    # Kita ambil lebih banyak history (misal 20) agar AI benar-benar ingat konteks awal
+    past_chats_raw = supabase.table("chat_history").select("sender, message")\
         .eq("user_id", request.user_id).eq("mentor_id", request.mentor_id)\
-        .order("created_at", desc=True).limit(10).execute().data
-    past_chats.reverse()
+        .order("created_at", desc=True).limit(20).execute().data 
+    
+    past_chats_raw.reverse() # Urutkan dari lama ke baru (Kronologis)
+    
+    # --- LOGIC PENGENDALI (THE BRAIN) ---
+    # Analisa fase user berdasarkan history chat
+    chat_state = analyze_chat_phase(past_chats_raw)
     
     messages_payload = []
-    for chat in past_chats:
+    for chat in past_chats_raw:
         role = "user" if chat['sender'] == "user" else "assistant"
+        # Hindari duplikasi pesan terakhir
         if chat['message'] != request.message: 
             messages_payload.append({"role": role, "content": chat['message']})
 
     # ==============================================================================
-    # SYSTEM PROMPT V34 (THE STRICT STEP ENFORCER)
+    # SYSTEM PROMPT V35 (STRICT PDF ENFORCER)
     # ==============================================================================
     
-    user_name_instruction = ""
-    if request.user_first_name:
-        user_name_instruction = f"Address the user as '{request.user_first_name}'."
-    else:
-        user_name_instruction = "Address the user directly. Do NOT use 'Teman' or 'Kawan'."
+    user_name_instruction = f"Panggil user dengan nama '{request.user_first_name}'." if request.user_first_name else "Panggil user dengan sopan."
 
     system_prompt = f"""
-YOU ARE {mentor['name']}, AN EXPERT IN {mentor.get('expertise', 'Fields')}.
-YOUR PERSONALITY IS: {mentor.get('personality', 'Strict & Professional Consultant')}.
+    ANDA ADALAH {mentor['name']}, AHLI DI BIDANG {mentor.get('expertise', 'Bisnis')}.
+    KARAKTER: {mentor.get('personality', 'Profesional, Tegas namun Membantu')}.
+    BAHASA: Indonesia (Natural & Conversational).
 
-SOURCE OF TRUTH (KNOWLEDGE BASE):
-{knowledge_base}
-
-==================================================
-!!! CRITICAL EXECUTION RULES !!!
-
-### PROTOCOL 1: THE IRON GATEKEEPER (MANDATORY START)
-Check history. Has the user answered these 2 questions?
-1. "Masalah spesifik apa yang mau dibahas?"
-2. "Goal/Harapan kamu apa?"
-
-IF "NO" -> STOP TEACHING. ASK THE 2 QUESTIONS IMMEDIATELY.
-IF "YES" -> Proceed to Protocol 2.
-
-### PROTOCOL 2: THE ELECTRIC FENCE (ANTI-JUMPING LOGIC)
-You must TRACK the "Current Step" based on conversation history.
-- If we are talking about "Langkah 1" (Ide/Riset), you MUST NOT discuss "Langkah 13" (Promosi), "Langkah 4" (Harga), or "Langkah 17" (Investor).
-- **IF USER ASKS TO JUMP (e.g., "Gimana cara promosi?" while at Step 1):**
-  - **REJECT THE REQUEST.**
-  - **SAY:** "Pertanyaan bagus tentang promosi. Tapi itu ada di Langkah 13. Saat ini kita masih di Langkah 1. Kita harus selesaikan ini dulu agar fondasi bisnis kuat. Mari kembali ke topik..."
-  - **REDIRECT** back to the Current Step immediately.
-
-**EXCEPTION:** Only allow jumping if the user EXPLICITLY says "Saya sudah selesai langkah 1-12" (Providing context). If they just ask a random question, BLOCK IT.
-
-### PROTOCOL 3: STEP-SPECIFIC FORMATS
-- **Langkah 7 (Bio):** Output MUST be <15 sentences AND include a CTA.
-- **Langkah 17 (Pitch Deck):** Output ONLY Slides 1-5. Then STOP and ask: "Mau lanjut ke Slide 6-10?".
-
-### PROTOCOL 4: CONSULTANT DIAGNOSIS
-- Explain step -> Ask if user has data.
-- Do not lecture endlessly. Make it a conversation.
-
-ADDRESSING:
-- {user_name_instruction}
-
-CURRENT USER MESSAGE:
-"{request.message}"
-"""
+    [MATERI MENTORING / KNOWLEDGE BASE]
+    {knowledge_base[:4000]} 
+    
+    ==================================================
+    [INSTRUKSI KHUSUS BERDASARKAN STATUS CHAT SAAT INI]
+    {chat_state['instruction']}
+    
+    ==================================================
+    [ATURAN UMUM]
+    1. Jawablah dengan singkat, padat, dan "punchy". Jangan bertele-tele.
+    2. Fokus SATU langkah per satu waktu. Jangan menumpuk informasi.
+    3. Jika masuk tahap meminta data, gunakan format tanya yang jelas.
+    
+    {user_name_instruction}
+    """
     
     final_messages = [{"role": "system", "content": system_prompt}] + messages_payload
     final_messages.append({"role": "user", "content": request.message})
@@ -243,23 +272,24 @@ CURRENT USER MESSAGE:
         completion = client.chat.completions.create(
             messages=final_messages,
             model="llama-3.3-70b-versatile",
-            temperature=0.0, 
-            max_tokens=1000, 
+            temperature=0.2, # Rendah agar patuh pada instruksi
+            max_tokens=800, 
         )
         ai_reply = completion.choices[0].message.content
     except Exception as e:
         print(f"Error AI: {e}")
-        ai_reply = "Maaf, sistem sedang sibuk. Mohon coba lagi."
+        ai_reply = "Maaf, saya sedang memproses data Anda. Bisa diulangi?"
 
     # Simpan Balasan AI
     supabase.table("chat_history").insert({
         "user_id": request.user_id, "mentor_id": request.mentor_id, "sender": "ai", "message": ai_reply
     }).execute()
 
-    # Video Engine Trigger
+    # Video Engine Trigger (Generate suara jika ada avatar)
     job_id = None
     if len(ai_reply) > 2 and mentor.get('avatar_url'):
         try:
+            # Logic ElevenLabs (sama seperti sebelumnya)
             audio_bytes = generate_elevenlabs_audio(ai_reply)
             if audio_bytes:
                 filename = f"audio/{uuid.uuid4()}.mp3"

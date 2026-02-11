@@ -14,7 +14,6 @@ from supabase import create_client, Client
 from groq import Groq
 import midtransclient
 import pypdf
-import edge_tts
 
 # ==========================================
 # 1. SETUP SYSTEM & CONFIGURATION
@@ -59,21 +58,15 @@ except Exception as e:
 # ==========================================
 # 2. HELPER FUNCTIONS
 # ==========================================
-async def generate_edge_tts_audio(text: str) -> bytes:
+def generate_elevenlabs_audio(text: str) -> bytes:
+    if not ELEVENLABS_API_KEY: return None
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
+    headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}
+    data = {"text": text[:1000], "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
     try:
-        # Pilihan suara Indonesia: "id-ID-ArdiNeural" (Cowok) atau "id-ID-GadisNeural" (Cewek)
-        voice = "id-ID-ArdiNeural" 
-        communicate = edge_tts.Communicate(text, voice)
-        
-        audio_data = bytearray()
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_data.extend(chunk["data"])
-                
-        return bytes(audio_data) if audio_data else None
-    except Exception as e:
-        print(f"❌ Error Edge-TTS: {e}")
-        return None
+        response = requests.post(url, json=data, headers=headers)
+        return response.content if response.status_code == 200 else None
+    except: return None
 
 # ==========================================
 # 3. DATA MODELS
@@ -296,8 +289,8 @@ async def chat_with_mentor(request: ChatRequest):
     job_id = None
     if len(ai_reply) > 2 and mentor.get('avatar_url'):
         try:
-            # BARU
-            audio_bytes = await generate_edge_tts_audio(ai_reply)
+            # Logic ElevenLabs (sama seperti sebelumnya)
+            audio_bytes = generate_elevenlabs_audio(ai_reply)
             if audio_bytes:
                 filename = f"audio/{uuid.uuid4()}.mp3"
                 supabase.storage.from_("avatars").upload(filename, audio_bytes, {"content-type": "audio/mpeg"})

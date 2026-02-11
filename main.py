@@ -41,10 +41,6 @@ try:
     SUPABASE_KEY = os.getenv("SUPABASE_KEY")
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     
-    # ElevenLabs Setup (Legacy)
-    ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
-    ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM") 
-
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     client = Groq(api_key=GROQ_API_KEY)
     
@@ -112,27 +108,20 @@ class MentorSettingsRequest(BaseModel):
     account_holder: str
     price: int
 
-class AdminUpdateUserRequest(BaseModel):
-    full_name: str
-    role: str
+class DeleteChatRequest(BaseModel):
+    user_id: str
+    mentor_id: int
+
+class FavoriteRequest(BaseModel):
+    user_id: str
+    mentor_id: int
 
 class PayoutRequestModel(BaseModel):
     mentor_id: int
     amount: int
     bank_info: str 
 
-class DiscoveryInput(BaseModel):
-    user_goal: str
-    
-class DeleteChatRequest(BaseModel):
-    user_id: str
-    mentor_id: int
-    
 class DeleteDocsRequest(BaseModel):
-    mentor_id: int
-
-class FavoriteRequest(BaseModel):
-    user_id: str
     mentor_id: int
 
 # ==========================================
@@ -212,6 +201,10 @@ async def chat_with_mentor(request: ChatRequest):
     mentor_data = supabase.table("mentors").select("*").eq("id", request.mentor_id).single().execute()
     mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "expertise": "General", "avatar_url": None}
     
+    # Ambil video bicara (talking video) dari database
+    # Kolom ini harus Anda buat di Supabase tabel mentors
+    talking_video_url = mentor.get('talking_video_url', None)
+
     docs = supabase.table("mentor_docs").select("content").eq("mentor_id", request.mentor_id).execute()
     knowledge_base = "\n\n".join([d['content'] for d in docs.data])
 
@@ -280,73 +273,28 @@ async def chat_with_mentor(request: ChatRequest):
     }).execute()
 
     # =======================================================
-    # VIDEO & AUDIO ENGINE TRIGGER (Menyambung ke Colab)
+    # AUDIO ENGINE (No more Colab)
     # =======================================================
-    # GANTI URL DI BAWAH INI SESUAI URL TERBARU DARI COLAB ANDA
-    COLAB_API_URL = "https://loud-phones-wish.loca.lt" 
-    
     audio_base64 = None
-    job_id = None
-
     if len(ai_reply) > 2:
         try:
-            # 1. Generate Suara dari Edge-TTS
+            # Generate Suara dari Edge-TTS
             audio_bytes = await generate_edge_tts_audio(ai_reply)
-            
             if audio_bytes:
                 audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
-                
-                # 2. Tembak Audio ke Colab untuk dijadikan Video
-                print(f"Mencoba tembak data ke: {COLAB_API_URL}/generate_video")
-                try:
-                    headers = {
-                        "Bypass-Tunnel-Reminder": "true",
-                        "ngrok-skip-browser-warning": "true",
-                        "User-Agent": "Mozilla/5.0"
-                    }
-                    
-                    response_colab = requests.post(
-                        f"{COLAB_API_URL}/generate_video", 
-                        json={"audio_base64": audio_base64}, 
-                        headers=headers,
-                        timeout=600 # Waktu tunggu ditingkatkan ke 10 menit
-                    )
-                    
-                    if response_colab.status_code == 200:
-                        colab_data = response_colab.json()
-                        if colab_data.get("status") == "success":
-                            video_b64 = colab_data.get("video_base64")
-                            print("✅ Video jadi! Menyimpan ke Supabase...")
-                            
-                            # 3. Simpan Video jadi ke Supabase
-                            video_bytes = base64.b64decode(video_b64)
-                            filename = f"video/{uuid.uuid4()}.mp4"
-                            supabase.storage.from_("avatars").upload(filename, video_bytes, {"content-type": "video/mp4"})
-                            video_url = supabase.storage.from_("avatars").get_public_url(filename)
-                            
-                            # 4. Beritahu Frontend kalau video sudah "completed"
-                            res = supabase.table("avatar_jobs").insert({
-                                "status": "completed", 
-                                "image_url": mentor.get('avatar_url', ''), 
-                                "video_url": video_url
-                            }).execute()
-                            
-                            if res.data: 
-                                job_id = res.data[0]['id']
-                                
-                except Exception as colab_err:
-                    print(f"❌ Gagal koneksi/render di Colab: {colab_err}")
-                        
         except Exception as e: 
-            print(f"❌ ERROR ENGINE: {e}")
+            print(f"❌ ERROR AUDIO ENGINE: {e}")
 
-    # Kembalikan data
+    # Kembalikan audio dan URL video loop bicara
     return {
         "mentor": mentor['name'], 
         "reply": ai_reply, 
-        "job_id": job_id, 
+        "talking_video_url": talking_video_url, # Berikan URL video loop bicara
         "audio": f"data:audio/mp3;base64,{audio_base64}" if audio_base64 else None
     }
+
+# --- API SISANYA TETAP SAMA ---
+# (Search, Reviews, Payment, midtrans, etc tetap di bawah ini)
 
 # --- API LAINNYA (SAMA SEPERTI SEBELUMNYA) ---
 @app.get("/mentors/search")

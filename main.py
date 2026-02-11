@@ -140,8 +140,13 @@ class FavoriteRequest(BaseModel):
 # ==========================================
 
 def analyze_chat_phase(history: List[dict]) -> dict:
+    """
+    Menganalisa history untuk menentukan User ada di Fase apa.
+    Mengembalikan dict berisi instruksi khusus untuk AI.
+    """
     user_messages = [m['message'] for m in history if m['sender'] == 'user']
     
+    # --- FASE 1: OPENING WAJIB (Logic PDF Poin 1) ---
     if len(user_messages) < 2:
         return {
             "phase": "OPENING",
@@ -155,6 +160,8 @@ def analyze_chat_phase(history: List[dict]) -> dict:
             Jika user baru menjawab satu, minta yang satunya lagi.
             """
         }
+    
+    # --- FASE 2: MENTORING (Logic PDF Poin 2, 3, 4, 5) ---
     else:
         context_summary = f"User Problem: {user_messages[0] if user_messages else 'Unknown'}. User Goal: {user_messages[1] if len(user_messages)>1 else 'Unknown'}."
         
@@ -302,7 +309,7 @@ async def chat_with_mentor(request: ChatRequest):
                         f"{COLAB_API_URL}/generate_video", 
                         json={"audio_base64": audio_base64}, 
                         headers=headers,
-                        timeout=300
+                        timeout=600 # Waktu tunggu ditingkatkan ke 10 menit
                     )
                     
                     if response_colab.status_code == 200:

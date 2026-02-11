@@ -2,6 +2,7 @@ import os
 import json
 import re
 import uuid
+import base64
 import requests
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -40,7 +41,7 @@ try:
     SUPABASE_KEY = os.getenv("SUPABASE_KEY")
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     
-    # ElevenLabs Setup
+    # ElevenLabs Setup (Legacy)
     ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
     ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM") 
 
@@ -61,9 +62,13 @@ except Exception as e:
 # ==========================================
 async def generate_edge_tts_audio(text: str) -> bytes:
     try:
-        # Pilihan suara Indonesia: "id-ID-ArdiNeural" (Cowok) atau "id-ID-GadisNeural" (Cewek)
+        # Pembersihan teks dari simbol Markdown agar TTS lancar
+        clean_text = text.replace("*", "").replace("#", "").replace("_", "").replace("`", "")
+        clean_text = clean_text.replace('\n', ' ').strip()
+        clean_text = clean_text[:800] # Limit teks
+
         voice = "id-ID-ArdiNeural" 
-        communicate = edge_tts.Communicate(text, voice)
+        communicate = edge_tts.Communicate(clean_text, voice)
         
         audio_data = bytearray()
         async for chunk in communicate.stream():
@@ -131,29 +136,12 @@ class FavoriteRequest(BaseModel):
     mentor_id: int
 
 # ==========================================
-# 4. API ENDPOINTS
-# ==========================================
-
-@app.get("/")
-def home():
-    return {"status": "AI Mentor Backend V34 Active"}
-
-# --- API CHAT UTAMA (V34 STRICT ENFORCER) ---
-# ==========================================
 # 5. LOGIC & STATE MANAGEMENT (THE BRAIN)
 # ==========================================
 
 def analyze_chat_phase(history: List[dict]) -> dict:
-    """
-    Menganalisa history untuk menentukan User ada di Fase apa.
-    Mengembalikan dict berisi instruksi khusus untuk AI.
-    """
     user_messages = [m['message'] for m in history if m['sender'] == 'user']
-    ai_messages = [m['message'] for m in history if m['sender'] == 'ai']
     
-    # --- FASE 1: OPENING WAJIB (Logic PDF Poin 1) ---
-    # Jika percakapan masih sangat pendek (kurang dari 2 balasan user), 
-    # kita asumsikan user belum selesai menjawab 2 pertanyaan emas.
     if len(user_messages) < 2:
         return {
             "phase": "OPENING",
@@ -167,12 +155,7 @@ def analyze_chat_phase(history: List[dict]) -> dict:
             Jika user baru menjawab satu, minta yang satunya lagi.
             """
         }
-    
-    # --- FASE 2: MENTORING (Logic PDF Poin 2, 3, 4, 5) ---
-    # Jika user sudah chat lebih dari 2 kali, kita ANGGAP dia sudah lolos opening.
-    # Kita kunci AI agar TIDAK BOLEH tanya opening lagi.
     else:
-        # Ambil ringkasan jawaban user dari chat awal untuk konteks
         context_summary = f"User Problem: {user_messages[0] if user_messages else 'Unknown'}. User Goal: {user_messages[1] if len(user_messages)>1 else 'Unknown'}."
         
         return {
@@ -191,11 +174,16 @@ def analyze_chat_phase(history: List[dict]) -> dict:
         }
 
 # ==========================================
-# ENDPOINT CHAT UTAMA
+# 4. API ENDPOINTS
 # ==========================================
+
+@app.get("/")
+def home():
+    return {"status": "AI Mentor Backend V34 Active"}
+
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
-    # 1. Cek Subscription (Sama seperti sebelumnya)
+    # 1. Cek Subscription
     now_str = datetime.now().isoformat()
     sub_check = supabase.table("subscriptions").select("*")\
         .eq("user_id", request.user_id)\
@@ -205,7 +193,7 @@ async def chat_with_mentor(request: ChatRequest):
         .execute()
     is_subscribed = len(sub_check.data) > 0
     
-    # 2. Cek Limit (Sama seperti sebelumnya)
+    # 2. Cek Limit
     history_count = supabase.table("chat_history").select("id", count="exact")\
         .eq("user_id", request.user_id).eq("mentor_id", request.mentor_id).eq("sender", "user").execute()
     user_chat_count = history_count.count if history_count.count else 0
@@ -226,28 +214,20 @@ async def chat_with_mentor(request: ChatRequest):
     }).execute()
 
     # 5. Fetch History
-    # Kita ambil lebih banyak history (misal 20) agar AI benar-benar ingat konteks awal
     past_chats_raw = supabase.table("chat_history").select("sender, message")\
         .eq("user_id", request.user_id).eq("mentor_id", request.mentor_id)\
         .order("created_at", desc=True).limit(20).execute().data 
+    past_chats_raw.reverse()
     
-    past_chats_raw.reverse() # Urutkan dari lama ke baru (Kronologis)
-    
-    # --- LOGIC PENGENDALI (THE BRAIN) ---
-    # Analisa fase user berdasarkan history chat
     chat_state = analyze_chat_phase(past_chats_raw)
     
     messages_payload = []
     for chat in past_chats_raw:
         role = "user" if chat['sender'] == "user" else "assistant"
-        # Hindari duplikasi pesan terakhir
         if chat['message'] != request.message: 
             messages_payload.append({"role": role, "content": chat['message']})
 
-    # ==============================================================================
-    # SYSTEM PROMPT V35 (STRICT PDF ENFORCER)
-    # ==============================================================================
-    
+    # SYSTEM PROMPT V35
     user_name_instruction = f"Panggil user dengan nama '{request.user_first_name}'." if request.user_first_name else "Panggil user dengan sopan."
 
     system_prompt = f"""
@@ -279,7 +259,7 @@ async def chat_with_mentor(request: ChatRequest):
         completion = client.chat.completions.create(
             messages=final_messages,
             model="llama-3.3-70b-versatile",
-            temperature=0.2, # Rendah agar patuh pada instruksi
+            temperature=0.2,
             max_tokens=800, 
         )
         ai_reply = completion.choices[0].message.content
@@ -292,30 +272,72 @@ async def chat_with_mentor(request: ChatRequest):
         "user_id": request.user_id, "mentor_id": request.mentor_id, "sender": "ai", "message": ai_reply
     }).execute()
 
-    # Video Engine Trigger (Generate suara jika ada avatar)
+    # =======================================================
+    # VIDEO & AUDIO ENGINE TRIGGER (Menyambung ke Colab)
+    # =======================================================
+    # GANTI URL DI BAWAH INI SESUAI URL TERBARU DARI COLAB ANDA
+    COLAB_API_URL = "https://loud-phones-wish.loca.lt" 
+    
     audio_base64 = None
+    job_id = None
 
     if len(ai_reply) > 2:
         try:
-            # Generate Suara dari Edge-TTS
+            # 1. Generate Suara dari Edge-TTS
             audio_bytes = await generate_edge_tts_audio(ai_reply)
             
             if audio_bytes:
-                # Ubah ke Base64 untuk dikirim ke Frontend
                 audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
                 
-                # CATATAN: 
-                # Kode upload ke Supabase dan avatar_jobs SAYA HAPUS/MATIKAN 
-                # sementara di sini agar tidak memicu loading video di frontend.
+                # 2. Tembak Audio ke Colab untuk dijadikan Video
+                print(f"Mencoba tembak data ke: {COLAB_API_URL}/generate_video")
+                try:
+                    headers = {
+                        "Bypass-Tunnel-Reminder": "true",
+                        "ngrok-skip-browser-warning": "true",
+                        "User-Agent": "Mozilla/5.0"
+                    }
+                    
+                    response_colab = requests.post(
+                        f"{COLAB_API_URL}/generate_video", 
+                        json={"audio_base64": audio_base64}, 
+                        headers=headers,
+                        timeout=300
+                    )
+                    
+                    if response_colab.status_code == 200:
+                        colab_data = response_colab.json()
+                        if colab_data.get("status") == "success":
+                            video_b64 = colab_data.get("video_base64")
+                            print("✅ Video jadi! Menyimpan ke Supabase...")
+                            
+                            # 3. Simpan Video jadi ke Supabase
+                            video_bytes = base64.b64decode(video_b64)
+                            filename = f"video/{uuid.uuid4()}.mp4"
+                            supabase.storage.from_("avatars").upload(filename, video_bytes, {"content-type": "video/mp4"})
+                            video_url = supabase.storage.from_("avatars").get_public_url(filename)
+                            
+                            # 4. Beritahu Frontend kalau video sudah "completed"
+                            res = supabase.table("avatar_jobs").insert({
+                                "status": "completed", 
+                                "image_url": mentor.get('avatar_url', ''), 
+                                "video_url": video_url
+                            }).execute()
+                            
+                            if res.data: 
+                                job_id = res.data[0]['id']
+                                
+                except Exception as colab_err:
+                    print(f"❌ Gagal koneksi/render di Colab: {colab_err}")
                         
         except Exception as e: 
             print(f"❌ ERROR ENGINE: {e}")
 
-    # Kembalikan job_id sebagai None agar langsung mainkan suara
+    # Kembalikan data
     return {
         "mentor": mentor['name'], 
         "reply": ai_reply, 
-        "job_id": None,  # <--- KUNCI UTAMANYA DI SINI
+        "job_id": job_id, 
         "audio": f"data:audio/mp3;base64,{audio_base64}" if audio_base64 else None
     }
 

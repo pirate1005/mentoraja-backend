@@ -293,20 +293,31 @@ async def chat_with_mentor(request: ChatRequest):
     }).execute()
 
     # Video Engine Trigger (Generate suara jika ada avatar)
-    job_id = None
-    if len(ai_reply) > 2 and mentor.get('avatar_url'):
-        try:
-            # BARU
-            audio_bytes = await generate_edge_tts_audio(ai_reply)
-            if audio_bytes:
-                filename = f"audio/{uuid.uuid4()}.mp3"
-                supabase.storage.from_("avatars").upload(filename, audio_bytes, {"content-type": "audio/mpeg"})
-                audio_url = supabase.storage.from_("avatars").get_public_url(filename)
-                res = supabase.table("avatar_jobs").insert({"status": "pending", "image_url": mentor['avatar_url'], "audio_url": audio_url}).execute()
-                if res.data: job_id = res.data[0]['id']
-        except Exception: pass
+    audio_base64 = None
 
-    return {"mentor": mentor['name'], "reply": ai_reply, "job_id": job_id}
+    if len(ai_reply) > 2:
+        try:
+            # Generate Suara dari Edge-TTS
+            audio_bytes = await generate_edge_tts_audio(ai_reply)
+            
+            if audio_bytes:
+                # Ubah ke Base64 untuk dikirim ke Frontend
+                audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+                
+                # CATATAN: 
+                # Kode upload ke Supabase dan avatar_jobs SAYA HAPUS/MATIKAN 
+                # sementara di sini agar tidak memicu loading video di frontend.
+                        
+        except Exception as e: 
+            print(f"❌ ERROR ENGINE: {e}")
+
+    # Kembalikan job_id sebagai None agar langsung mainkan suara
+    return {
+        "mentor": mentor['name'], 
+        "reply": ai_reply, 
+        "job_id": None,  # <--- KUNCI UTAMANYA DI SINI
+        "audio": f"data:audio/mp3;base64,{audio_base64}" if audio_base64 else None
+    }
 
 # --- API LAINNYA (SAMA SEPERTI SEBELUMNYA) ---
 @app.get("/mentors/search")

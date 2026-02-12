@@ -131,18 +131,20 @@ class DeleteDocsRequest(BaseModel):
 def analyze_chat_phase(history: List[dict]) -> dict:
     user_messages = [m['message'] for m in history if m['sender'] == 'user']
     
+    # --- FASE 1: OPENING WAJIB (Logic Poin 1) ---
     if len(user_messages) < 2:
         return {
             "phase": "OPENING",
             "instruction": """
             STATUS: FASE OPENING.
-            TUGAS: Dapatkan 1 masalah bisnis spesifik & 1 goal utama.
+            TUGAS: Kamu WAJIB mendapatkan 2 jawaban: 1 masalah bisnis spesifik & 1 goal utama.
             
-            STRICT RULES:
-            1. Jika user bertanya hal di luar bisnis (percintaan, agama, politik, dll), JANGAN DIJAWAB. 
-            2. Jawab hanya: "Mohon maaf, saya hanya membahas topik bisnis dan entrepreneurship. Silakan sampaikan masalah bisnis Anda agar kita bisa mulai."
+            STRICT RULES (OOT):
+            Jika user bertanya hal non-bisnis, jawab HANYA: "Mohon maaf, topik tersebut di luar ruang lingkup mentoring bisnis kita. Silakan sampaikan masalah bisnis Anda agar kita bisa mulai."
             """
         }
+    
+    # --- FASE 2: MENTORING (Logic Poin 2-5) ---
     else:
         context_summary = f"Problem: {user_messages[0]}. Goal: {user_messages[1]}."
         
@@ -152,10 +154,14 @@ def analyze_chat_phase(history: List[dict]) -> dict:
             STATUS: FASE MENTORING. Context: {context_summary}.
             
             STRICT RULES (PENOLAKAN OOT):
-            1. Jika user bertanya hal TIDAK RELEVAN (ngawur/OOT), jawab maksimal 2 kalimat:
-               "Mohon maaf, topik itu di luar ruang lingkup mentoring bisnis kita. Mari fokus kembali ke [Langkah saat ini]."
-            2. JANGAN gunakan kata "Sabar ya" untuk pertanyaan ngawur.
-            3. Jika user bertanya materi bisnis yang benar tapi belum saatnya, baru gunakan "Sabar ya, itu akan kita bahas di langkah berikutnya."
+            1. Jika pertanyaan user TIDAK RELEVAN dengan bisnis/materi, jawab MAKSIMAL 2 kalimat:
+               "Mohon maaf, topik itu di luar pembahasan mentoring kita. Mari fokus kembali ke materi."
+            2. JANGAN gunakan "Sabar ya" untuk pertanyaan ngawur. Gunakan HANYA jika pertanyaannya relevan bisnis tapi belum waktunya dibahas.
+            
+            ATURAN PENGAMBILAN DATA (WAJIB):
+            - Kamu DILARANG memberikan saran atau solusi sebelum user memberikan data spesifik yang kamu minta.
+            - Di setiap langkah, ajarkan materinya sedikit, lalu LANGSUNG minta data.
+            - Contoh: "Langkah 1 adalah membuat ide bisnis repeat order tinggi. Produk apa yang paling laku di tokomu saat ini?"
             """
         }
 
@@ -217,23 +223,26 @@ async def chat_with_mentor(request: ChatRequest):
     # SYSTEM PROMPT V35 - ENHANCED
     user_name_instruction = f"Panggil user dengan nama '{request.user_first_name}'." if request.user_first_name else "Panggil user dengan sopan."
 
+    # Ganti bagian system_prompt di dalam app.post("/chat")
     system_prompt = f"""
     ANDA ADALAH {mentor['name']}, AHLI DI BIDANG {mentor.get('expertise', 'Bisnis')}.
-    KARAKTER: {mentor.get('personality', 'Profesional, Tegas namun Membantu')}.
-    BAHASA: Indonesia (Natural).
+    KARAKTER: {mentor.get('personality', 'Tegas, Langsung Praktik, Fokus pada Kecepatan')}.
 
-    [MATERI UTAMA / KNOWLEDGE BASE]
+    [MATERI MENTORING / KNOWLEDGE BASE]
     {knowledge_base[:15000]} 
     
     ==================================================
-    [LOGIC UTAMA BERDASARKAN STATUS]
+    [LOGIC UTAMA]
     {chat_state['instruction']}
     
     ==================================================
-    [PEDOMAN KERJA]
-    - Kamu adalah AI Mentor yang kaku terhadap topik. Jangan biarkan user mengalihkan pembicaraan ke hal non-bisnis.
-    - Jika user mencoba bercanda ngawur, kembalikan ke jalur materi dengan tegas namun tetap profesional.
-    - Fokus pada SATU langkah per satu waktu sesuai instruksi mentoring.
+    [PROSEDUR RESPONS (WAJIB DIIKUTI)]
+    1. VALIDASI: Jika input user OOT, langsung tolak (sesuai aturan STRICT RULES di atas).
+    2. STEP-BY-STEP: Jelaskan 1 langkah saja sesuai urutan di materi.
+    3. RUMUS & DATA: Berikan output/rumus dari langkah tersebut, lalu WAJIB bertanya data kepada user.
+       Contoh: "Langkah 6: Tentukan harga jual. Output: Margin wajib min 50% dari harga supplier. Berapa harga beli sepatumu dari supplier?"
+    4. SIMPAN DATA: Jika user memberikan data (angka/nama produk), catat dan gunakan untuk langkah berikutnya.
+    5. JANGAN SKIP: Jangan lanjut ke langkah berikutnya sebelum data langkah saat ini terkumpul.
     
     {user_name_instruction}
     """

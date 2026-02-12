@@ -129,43 +129,41 @@ class DeleteDocsRequest(BaseModel):
 # ==========================================
 
 def analyze_chat_phase(history: List[dict]) -> dict:
-    """
-    Menganalisa history untuk menentukan User ada di Fase apa.
-    Mengembalikan dict berisi instruksi khusus untuk AI.
-    """
     user_messages = [m['message'] for m in history if m['sender'] == 'user']
     
-    # --- FASE 1: OPENING WAJIB (Logic PDF Poin 1) ---
+    # --- FASE 1: OPENING WAJIB ---
     if len(user_messages) < 2:
         return {
             "phase": "OPENING",
             "instruction": """
-            STATUS: FASE OPENING (Awal Sesi).
-            TUGAS UTAMA: Kamu WAJIB mendapatkan jawaban untuk 2 pertanyaan ini sebelum lanjut:
+            STATUS: FASE OPENING.
+            TUGAS UTAMA: Kamu WAJIB mendapatkan jawaban untuk:
             1. "1 masalah spesifik apa yang mau kamu bahas?"
-            2. "Goal kamu apa / kamu berharap hasilnya apa?"
+            2. "Goal kamu apa?"
             
-            JANGAN MENGAJAR APAPUN DULU. Fokus hanya pada mendapatkan 2 jawaban ini.
-            Jika user baru menjawab satu, minta yang satunya lagi.
+            PENOLAKAN OTOMATIS: Jika user bertanya hal di luar bisnis/mentoring pada fase ini, langsung tolak dengan sopan dan ingatkan tujuan sesi ini.
             """
         }
     
-    # --- FASE 2: MENTORING (Logic PDF Poin 2, 3, 4, 5) ---
+    # --- FASE 2: MENTORING ---
     else:
-        context_summary = f"User Problem: {user_messages[0] if user_messages else 'Unknown'}. User Goal: {user_messages[1] if len(user_messages)>1 else 'Unknown'}."
+        context_summary = f"User Problem: {user_messages[0]}. User Goal: {user_messages[1]}."
         
         return {
             "phase": "MENTORING",
             "instruction": f"""
-            STATUS: FASE MENTORING (Step-by-Step Teaching).
+            STATUS: FASE MENTORING (Step-by-Step).
             CONTEXT: {context_summary}
             
-            ATURAN FATAL (JANGAN DILANGGAR):
-            1. **DILARANG BERTANYA LAGI** "Apa masalahmu?" atau "Apa goalmu?". User SUDAH menjawabnya. Anggap kamu sudah tahu.
-            2. Mulailah mengajar langkah demi langkah (Step 1, lalu Step 2, dst) sesuai KNOWLEDGE BASE.
-            3. **JANGAN SKIP LANGKAH.** Ajarkan SATU langkah, lalu minta data/konfirmasi user, baru lanjut ke langkah berikutnya.
-            4. Jika user bertanya hal di luar langkah saat ini, TOLAK dengan sopan: "Sabar ya, pertanyaan kamu itu penting dan akan kita bahas nanti. Tapi biar hasilnya akurat, kita bahas satu per satu dulu." (Sesuai Logic Poin 5).
-            5. Di setiap langkah, minta DATA dari user. Jika user tidak punya data, tawarkan bantuan hitung (Sesuai Logic Poin 3).
+            ATURAN VALIDASI TOPIK (FATAL):
+            1. Cek apakah pertanyaan user RELEVAN dengan bisnis, mentoring, atau materi di KNOWLEDGE BASE.
+            2. JIKA TIDAK RELEVAN (contoh: percintaan, gosip, atau hal ngawur lainnya), kamu WAJIB menjawab: 
+               "Mohon maaf, topik tersebut di luar ruang lingkup pembahasan mentoring kita. Saya di sini untuk membantu Anda mencapai goal bisnis Anda. Mari kita fokus kembali ke materi."
+            3. DILARANG menjawab pertanyaan ngawur dengan kata "Sabar ya". "Sabar ya" HANYA boleh digunakan jika user bertanya materi bisnis yang akan dibahas di STEP BERIKUTNYA.
+            
+            ATURAN MENTORING:
+            - Ajarkan SATU langkah saja, lalu minta data/konfirmasi. JANGAN SKIP LANGKAH.
+            - Jika user bertanya hal bisnis yang benar namun belum saatnya, baru gunakan: "Sabar ya, itu penting dan akan kita bahas nanti. Mari selesaikan langkah ini dulu."
             """
         }
 
@@ -199,12 +197,9 @@ async def chat_with_mentor(request: ChatRequest):
 
     # 3. Data Mentor & KB
     mentor_data = supabase.table("mentors").select("*").eq("id", request.mentor_id).single().execute()
-    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "expertise": "General", "avatar_url": None}
+    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor"}
     
-    # Ambil video bicara (talking video) dari database
-    # Kolom ini harus Anda buat di Supabase tabel mentors
     talking_video_url = mentor.get('talking_video_url', None)
-
     docs = supabase.table("mentor_docs").select("content").eq("mentor_id", request.mentor_id).execute()
     knowledge_base = "\n\n".join([d['content'] for d in docs.data])
 
@@ -227,26 +222,26 @@ async def chat_with_mentor(request: ChatRequest):
         if chat['message'] != request.message: 
             messages_payload.append({"role": role, "content": chat['message']})
 
-    # SYSTEM PROMPT V35
+    # SYSTEM PROMPT V35 - ENHANCED
     user_name_instruction = f"Panggil user dengan nama '{request.user_first_name}'." if request.user_first_name else "Panggil user dengan sopan."
 
     system_prompt = f"""
     ANDA ADALAH {mentor['name']}, AHLI DI BIDANG {mentor.get('expertise', 'Bisnis')}.
     KARAKTER: {mentor.get('personality', 'Profesional, Tegas namun Membantu')}.
-    BAHASA: Indonesia (Natural & Conversational).
+    BAHASA: Indonesia (Natural).
 
-    [MATERI MENTORING / KNOWLEDGE BASE]
-    {knowledge_base[:20000]} 
+    [MATERI UTAMA / KNOWLEDGE BASE]
+    {knowledge_base[:15000]} 
     
     ==================================================
-    [INSTRUKSI KHUSUS BERDASARKAN STATUS CHAT SAAT INI]
+    [LOGIC UTAMA BERDASARKAN STATUS]
     {chat_state['instruction']}
     
     ==================================================
-    [ATURAN UMUM]
-    1. Jawablah dengan singkat, padat, dan "punchy". Jangan bertele-tele.
-    2. Fokus SATU langkah per satu waktu. Jangan menumpuk informasi.
-    3. Jika masuk tahap meminta data, gunakan format tanya yang jelas.
+    [PEDOMAN KERJA]
+    - Kamu adalah AI Mentor yang kaku terhadap topik. Jangan biarkan user mengalihkan pembicaraan ke hal non-bisnis.
+    - Jika user mencoba bercanda ngawur, kembalikan ke jalur materi dengan tegas namun tetap profesional.
+    - Fokus pada SATU langkah per satu waktu sesuai instruksi mentoring.
     
     {user_name_instruction}
     """
@@ -259,13 +254,12 @@ async def chat_with_mentor(request: ChatRequest):
         completion = client.chat.completions.create(
             messages=final_messages,
             model="llama-3.3-70b-versatile",
-            temperature=0.2,
+            temperature=0.1, # Menurunkan suhu agar AI tidak berhalusinasi atau terlalu kreatif melayani OOT
             max_tokens=800, 
         )
         ai_reply = completion.choices[0].message.content
     except Exception as e:
-        print(f"Error AI: {e}")
-        ai_reply = "Maaf, saya sedang memproses data Anda. Bisa diulangi?"
+        ai_reply = "Maaf, mari kita fokus kembali ke pembahasan bisnis Anda. Bisa diulangi?"
 
     # Simpan Balasan AI
     supabase.table("chat_history").insert({
@@ -289,8 +283,8 @@ async def chat_with_mentor(request: ChatRequest):
     return {
         "mentor": mentor['name'], 
         "reply": ai_reply, 
-        "talking_video_url": talking_video_url, # Berikan URL video loop bicara
-        "audio": f"data:audio/mp3;base64,{audio_base64}" if audio_base64 else None
+        "talking_video_url": talking_video_url,
+        "audio": f"data:audio/mp3;base64,{base64.b64encode(await generate_edge_tts_audio(ai_reply)).decode('utf-8')}" if ai_reply else None
     }
 
 # --- API SISANYA TETAP SAMA ---

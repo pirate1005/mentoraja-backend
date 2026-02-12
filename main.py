@@ -131,39 +131,31 @@ class DeleteDocsRequest(BaseModel):
 def analyze_chat_phase(history: List[dict]) -> dict:
     user_messages = [m['message'] for m in history if m['sender'] == 'user']
     
-    # --- FASE 1: OPENING WAJIB ---
     if len(user_messages) < 2:
         return {
             "phase": "OPENING",
             "instruction": """
             STATUS: FASE OPENING.
-            TUGAS UTAMA: Kamu WAJIB mendapatkan jawaban untuk:
-            1. "1 masalah spesifik apa yang mau kamu bahas?"
-            2. "Goal kamu apa?"
+            TUGAS: Dapatkan 1 masalah bisnis spesifik & 1 goal utama.
             
-            PENOLAKAN OTOMATIS: Jika user bertanya hal di luar bisnis/mentoring pada fase ini, langsung tolak dengan sopan dan ingatkan tujuan sesi ini.
+            STRICT RULES:
+            1. Jika user bertanya hal di luar bisnis (percintaan, agama, politik, dll), JANGAN DIJAWAB. 
+            2. Jawab hanya: "Mohon maaf, saya hanya membahas topik bisnis dan entrepreneurship. Silakan sampaikan masalah bisnis Anda agar kita bisa mulai."
             """
         }
-    
-    # --- FASE 2: MENTORING ---
     else:
-        context_summary = f"User Problem: {user_messages[0]}. User Goal: {user_messages[1]}."
+        context_summary = f"Problem: {user_messages[0]}. Goal: {user_messages[1]}."
         
         return {
             "phase": "MENTORING",
             "instruction": f"""
-            STATUS: FASE MENTORING (Step-by-Step).
-            CONTEXT: {context_summary}
+            STATUS: FASE MENTORING. Context: {context_summary}.
             
-            ATURAN VALIDASI TOPIK (FATAL):
-            1. Cek apakah pertanyaan user RELEVAN dengan bisnis, mentoring, atau materi di KNOWLEDGE BASE.
-            2. JIKA TIDAK RELEVAN (contoh: percintaan, gosip, atau hal ngawur lainnya), kamu WAJIB menjawab: 
-               "Mohon maaf, topik tersebut di luar ruang lingkup pembahasan mentoring kita. Saya di sini untuk membantu Anda mencapai goal bisnis Anda. Mari kita fokus kembali ke materi."
-            3. DILARANG menjawab pertanyaan ngawur dengan kata "Sabar ya". "Sabar ya" HANYA boleh digunakan jika user bertanya materi bisnis yang akan dibahas di STEP BERIKUTNYA.
-            
-            ATURAN MENTORING:
-            - Ajarkan SATU langkah saja, lalu minta data/konfirmasi. JANGAN SKIP LANGKAH.
-            - Jika user bertanya hal bisnis yang benar namun belum saatnya, baru gunakan: "Sabar ya, itu penting dan akan kita bahas nanti. Mari selesaikan langkah ini dulu."
+            STRICT RULES (PENOLAKAN OOT):
+            1. Jika user bertanya hal TIDAK RELEVAN (ngawur/OOT), jawab maksimal 2 kalimat:
+               "Mohon maaf, topik itu di luar ruang lingkup mentoring bisnis kita. Mari fokus kembali ke [Langkah saat ini]."
+            2. JANGAN gunakan kata "Sabar ya" untuk pertanyaan ngawur.
+            3. Jika user bertanya materi bisnis yang benar tapi belum saatnya, baru gunakan "Sabar ya, itu akan kita bahas di langkah berikutnya."
             """
         }
 

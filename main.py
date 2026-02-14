@@ -2,7 +2,6 @@ import os
 import json
 import re
 import uuid
-import base64
 import requests
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -15,7 +14,6 @@ from supabase import create_client, Client
 from groq import Groq
 import midtransclient
 import pypdf
-import edge_tts
 
 # ==========================================
 # 1. SETUP SYSTEM & CONFIGURATION
@@ -41,6 +39,10 @@ try:
     SUPABASE_KEY = os.getenv("SUPABASE_KEY")
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     
+    # ElevenLabs Setup
+    ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+    ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM") 
+
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     client = Groq(api_key=GROQ_API_KEY)
     
@@ -56,25 +58,15 @@ except Exception as e:
 # ==========================================
 # 2. HELPER FUNCTIONS
 # ==========================================
-async def generate_edge_tts_audio(text: str) -> bytes:
+def generate_elevenlabs_audio(text: str) -> bytes:
+    if not ELEVENLABS_API_KEY: return None
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
+    headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}
+    data = {"text": text[:1000], "model_id": "eleven_multilingual_v2", "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}}
     try:
-        # Pembersihan teks dari simbol Markdown agar TTS lancar
-        clean_text = text.replace("*", "").replace("#", "").replace("_", "").replace("`", "")
-        clean_text = clean_text.replace('\n', ' ').strip()
-        clean_text = clean_text[:800] # Limit teks
-
-        voice = "id-ID-ArdiNeural" 
-        communicate = edge_tts.Communicate(clean_text, voice)
-        
-        audio_data = bytearray()
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_data.extend(chunk["data"])
-                
-        return bytes(audio_data) if audio_data else None
-    except Exception as e:
-        print(f"❌ Error Edge-TTS: {e}")
-        return None
+        response = requests.post(url, json=data, headers=headers)
+        return response.content if response.status_code == 200 else None
+    except: return None
 
 # ==========================================
 # 3. DATA MODELS
@@ -108,62 +100,28 @@ class MentorSettingsRequest(BaseModel):
     account_holder: str
     price: int
 
-class DeleteChatRequest(BaseModel):
-    user_id: str
-    mentor_id: int
-
-class FavoriteRequest(BaseModel):
-    user_id: str
-    mentor_id: int
+class AdminUpdateUserRequest(BaseModel):
+    full_name: str
+    role: str
 
 class PayoutRequestModel(BaseModel):
     mentor_id: int
     amount: int
     bank_info: str 
 
+class DiscoveryInput(BaseModel):
+    user_goal: str
+    
+class DeleteChatRequest(BaseModel):
+    user_id: str
+    mentor_id: int
+    
 class DeleteDocsRequest(BaseModel):
     mentor_id: int
 
-# ==========================================
-# 5. LOGIC & STATE MANAGEMENT (THE BRAIN)
-# ==========================================
-
-def analyze_chat_phase(history: List[dict]) -> dict:
-    user_messages = [m['message'] for m in history if m['sender'] == 'user']
-    
-    # --- FASE 1: OPENING WAJIB (Logic Poin 1) ---
-    if len(user_messages) < 2:
-        return {
-            "phase": "OPENING",
-            "instruction": """
-            STATUS: FASE OPENING.
-            TUGAS: Kamu WAJIB mendapatkan 2 jawaban: 1 masalah bisnis spesifik & 1 goal utama.
-            
-            STRICT RULES (OOT):
-            Jika user bertanya hal non-bisnis, jawab HANYA: "Mohon maaf, topik tersebut di luar ruang lingkup mentoring bisnis kita. Silakan sampaikan masalah bisnis Anda agar kita bisa mulai."
-            """
-        }
-    
-    # --- FASE 2: MENTORING (Logic Poin 2-5) ---
-    else:
-        context_summary = f"Problem: {user_messages[0]}. Goal: {user_messages[1]}."
-        
-        return {
-            "phase": "MENTORING",
-            "instruction": f"""
-            STATUS: FASE MENTORING. Context: {context_summary}.
-            
-            STRICT RULES (PENOLAKAN OOT):
-            1. Jika pertanyaan user TIDAK RELEVAN dengan bisnis/materi, jawab MAKSIMAL 2 kalimat:
-               "Mohon maaf, topik itu di luar pembahasan mentoring kita. Mari fokus kembali ke materi."
-            2. JANGAN gunakan "Sabar ya" untuk pertanyaan ngawur. Gunakan HANYA jika pertanyaannya relevan bisnis tapi belum waktunya dibahas.
-            
-            ATURAN PENGAMBILAN DATA (WAJIB):
-            - Kamu DILARANG memberikan saran atau solusi sebelum user memberikan data spesifik yang kamu minta.
-            - Di setiap langkah, ajarkan materinya sedikit, lalu LANGSUNG minta data.
-            - Contoh: "Langkah 1 adalah membuat ide bisnis repeat order tinggi. Produk apa yang paling laku di tokomu saat ini?"
-            """
-        }
+class FavoriteRequest(BaseModel):
+    user_id: str
+    mentor_id: int
 
 # ==========================================
 # 4. API ENDPOINTS
@@ -173,9 +131,64 @@ def analyze_chat_phase(history: List[dict]) -> dict:
 def home():
     return {"status": "AI Mentor Backend V34 Active"}
 
+# --- API CHAT UTAMA (V34 STRICT ENFORCER) ---
+# ==========================================
+# 5. LOGIC & STATE MANAGEMENT (THE BRAIN)
+# ==========================================
+
+def analyze_chat_phase(history: List[dict]) -> dict:
+    """
+    Menganalisa history untuk menentukan User ada di Fase apa.
+    Mengembalikan dict berisi instruksi khusus untuk AI.
+    """
+    user_messages = [m['message'] for m in history if m['sender'] == 'user']
+    ai_messages = [m['message'] for m in history if m['sender'] == 'ai']
+    
+    # --- FASE 1: OPENING WAJIB (Logic PDF Poin 1) ---
+    # Jika percakapan masih sangat pendek (kurang dari 2 balasan user), 
+    # kita asumsikan user belum selesai menjawab 2 pertanyaan emas.
+    if len(user_messages) < 2:
+        return {
+            "phase": "OPENING",
+            "instruction": """
+            STATUS: FASE OPENING (Awal Sesi).
+            TUGAS UTAMA: Kamu WAJIB mendapatkan jawaban untuk 2 pertanyaan ini sebelum lanjut:
+            1. "1 masalah spesifik apa yang mau kamu bahas?"
+            2. "Goal kamu apa / kamu berharap hasilnya apa?"
+            
+            JANGAN MENGAJAR APAPUN DULU. Fokus hanya pada mendapatkan 2 jawaban ini.
+            Jika user baru menjawab satu, minta yang satunya lagi.
+            """
+        }
+    
+    # --- FASE 2: MENTORING (Logic PDF Poin 2, 3, 4, 5) ---
+    # Jika user sudah chat lebih dari 2 kali, kita ANGGAP dia sudah lolos opening.
+    # Kita kunci AI agar TIDAK BOLEH tanya opening lagi.
+    else:
+        # Ambil ringkasan jawaban user dari chat awal untuk konteks
+        context_summary = f"User Problem: {user_messages[0] if user_messages else 'Unknown'}. User Goal: {user_messages[1] if len(user_messages)>1 else 'Unknown'}."
+        
+        return {
+            "phase": "MENTORING",
+            "instruction": f"""
+            STATUS: FASE MENTORING (Step-by-Step Teaching).
+            CONTEXT: {context_summary}
+            
+            ATURAN FATAL (JANGAN DILANGGAR):
+            1. **DILARANG BERTANYA LAGI** "Apa masalahmu?" atau "Apa goalmu?". User SUDAH menjawabnya. Anggap kamu sudah tahu.
+            2. Mulailah mengajar langkah demi langkah (Step 1, lalu Step 2, dst) sesuai KNOWLEDGE BASE.
+            3. **JANGAN SKIP LANGKAH.** Ajarkan SATU langkah, lalu minta data/konfirmasi user, baru lanjut ke langkah berikutnya.
+            4. Jika user bertanya hal di luar langkah saat ini, TOLAK dengan sopan: "Sabar ya, pertanyaan kamu itu penting dan akan kita bahas nanti. Tapi biar hasilnya akurat, kita bahas satu per satu dulu." (Sesuai Logic Poin 5).
+            5. Di setiap langkah, minta DATA dari user. Jika user tidak punya data, tawarkan bantuan hitung (Sesuai Logic Poin 3).
+            """
+        }
+
+# ==========================================
+# ENDPOINT CHAT UTAMA
+# ==========================================
 @app.post("/chat")
 async def chat_with_mentor(request: ChatRequest):
-    # 1. Cek Subscription
+    # 1. Cek Subscription (Sama seperti sebelumnya)
     now_str = datetime.now().isoformat()
     sub_check = supabase.table("subscriptions").select("*")\
         .eq("user_id", request.user_id)\
@@ -185,7 +198,7 @@ async def chat_with_mentor(request: ChatRequest):
         .execute()
     is_subscribed = len(sub_check.data) > 0
     
-    # 2. Cek Limit
+    # 2. Cek Limit (Sama seperti sebelumnya)
     history_count = supabase.table("chat_history").select("id", count="exact")\
         .eq("user_id", request.user_id).eq("mentor_id", request.mentor_id).eq("sender", "user").execute()
     user_chat_count = history_count.count if history_count.count else 0
@@ -195,9 +208,8 @@ async def chat_with_mentor(request: ChatRequest):
 
     # 3. Data Mentor & KB
     mentor_data = supabase.table("mentors").select("*").eq("id", request.mentor_id).single().execute()
-    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor"}
+    mentor = mentor_data.data if mentor_data.data else {"name": "Mentor", "expertise": "General", "avatar_url": None}
     
-    talking_video_url = mentor.get('talking_video_url', None)
     docs = supabase.table("mentor_docs").select("content").eq("mentor_id", request.mentor_id).execute()
     knowledge_base = "\n\n".join([d['content'] for d in docs.data])
 
@@ -207,42 +219,47 @@ async def chat_with_mentor(request: ChatRequest):
     }).execute()
 
     # 5. Fetch History
+    # Kita ambil lebih banyak history (misal 20) agar AI benar-benar ingat konteks awal
     past_chats_raw = supabase.table("chat_history").select("sender, message")\
         .eq("user_id", request.user_id).eq("mentor_id", request.mentor_id)\
         .order("created_at", desc=True).limit(20).execute().data 
-    past_chats_raw.reverse()
     
+    past_chats_raw.reverse() # Urutkan dari lama ke baru (Kronologis)
+    
+    # --- LOGIC PENGENDALI (THE BRAIN) ---
+    # Analisa fase user berdasarkan history chat
     chat_state = analyze_chat_phase(past_chats_raw)
     
     messages_payload = []
     for chat in past_chats_raw:
         role = "user" if chat['sender'] == "user" else "assistant"
+        # Hindari duplikasi pesan terakhir
         if chat['message'] != request.message: 
             messages_payload.append({"role": role, "content": chat['message']})
 
-    # SYSTEM PROMPT V35 - ENHANCED
+    # ==============================================================================
+    # SYSTEM PROMPT V35 (STRICT PDF ENFORCER)
+    # ==============================================================================
+    
     user_name_instruction = f"Panggil user dengan nama '{request.user_first_name}'." if request.user_first_name else "Panggil user dengan sopan."
 
-    # Ganti bagian system_prompt di dalam app.post("/chat")
     system_prompt = f"""
     ANDA ADALAH {mentor['name']}, AHLI DI BIDANG {mentor.get('expertise', 'Bisnis')}.
-    KARAKTER: {mentor.get('personality', 'Tegas, Langsung Praktik, Fokus pada Kecepatan')}.
+    KARAKTER: {mentor.get('personality', 'Profesional, Tegas namun Membantu')}.
+    BAHASA: Indonesia (Natural & Conversational).
 
     [MATERI MENTORING / KNOWLEDGE BASE]
-    {knowledge_base[:15000]} 
+    {knowledge_base[:20000]} 
     
     ==================================================
-    [LOGIC UTAMA]
+    [INSTRUKSI KHUSUS BERDASARKAN STATUS CHAT SAAT INI]
     {chat_state['instruction']}
     
     ==================================================
-    [PROSEDUR RESPONS (WAJIB DIIKUTI)]
-    1. VALIDASI: Jika input user OOT, langsung tolak (sesuai aturan STRICT RULES di atas).
-    2. STEP-BY-STEP: Jelaskan 1 langkah saja sesuai urutan di materi.
-    3. RUMUS & DATA: Berikan output/rumus dari langkah tersebut, lalu WAJIB bertanya data kepada user.
-       Contoh: "Langkah 6: Tentukan harga jual. Output: Margin wajib min 50% dari harga supplier. Berapa harga beli sepatumu dari supplier?"
-    4. SIMPAN DATA: Jika user memberikan data (angka/nama produk), catat dan gunakan untuk langkah berikutnya.
-    5. JANGAN SKIP: Jangan lanjut ke langkah berikutnya sebelum data langkah saat ini terkumpul.
+    [ATURAN UMUM]
+    1. Jawablah dengan singkat, padat, dan "punchy". Jangan bertele-tele.
+    2. Fokus SATU langkah per satu waktu. Jangan menumpuk informasi.
+    3. Jika masuk tahap meminta data, gunakan format tanya yang jelas.
     
     {user_name_instruction}
     """
@@ -255,41 +272,34 @@ async def chat_with_mentor(request: ChatRequest):
         completion = client.chat.completions.create(
             messages=final_messages,
             model="llama-3.3-70b-versatile",
-            temperature=0.1, # Menurunkan suhu agar AI tidak berhalusinasi atau terlalu kreatif melayani OOT
+            temperature=0.2, # Rendah agar patuh pada instruksi
             max_tokens=800, 
         )
         ai_reply = completion.choices[0].message.content
     except Exception as e:
-        ai_reply = "Maaf, mari kita fokus kembali ke pembahasan bisnis Anda. Bisa diulangi?"
+        print(f"Error AI: {e}")
+        ai_reply = "Maaf, saya sedang memproses data Anda. Bisa diulangi?"
 
     # Simpan Balasan AI
     supabase.table("chat_history").insert({
         "user_id": request.user_id, "mentor_id": request.mentor_id, "sender": "ai", "message": ai_reply
     }).execute()
 
-    # =======================================================
-    # AUDIO ENGINE (No more Colab)
-    # =======================================================
-    audio_base64 = None
-    if len(ai_reply) > 2:
+    # Video Engine Trigger (Generate suara jika ada avatar)
+    job_id = None
+    if len(ai_reply) > 2 and mentor.get('avatar_url'):
         try:
-            # Generate Suara dari Edge-TTS
-            audio_bytes = await generate_edge_tts_audio(ai_reply)
+            # Logic ElevenLabs (sama seperti sebelumnya)
+            audio_bytes = generate_elevenlabs_audio(ai_reply)
             if audio_bytes:
-                audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
-        except Exception as e: 
-            print(f"❌ ERROR AUDIO ENGINE: {e}")
+                filename = f"audio/{uuid.uuid4()}.mp3"
+                supabase.storage.from_("avatars").upload(filename, audio_bytes, {"content-type": "audio/mpeg"})
+                audio_url = supabase.storage.from_("avatars").get_public_url(filename)
+                res = supabase.table("avatar_jobs").insert({"status": "pending", "image_url": mentor['avatar_url'], "audio_url": audio_url}).execute()
+                if res.data: job_id = res.data[0]['id']
+        except Exception: pass
 
-    # Kembalikan audio dan URL video loop bicara
-    return {
-        "mentor": mentor['name'], 
-        "reply": ai_reply, 
-        "talking_video_url": talking_video_url,
-        "audio": f"data:audio/mp3;base64,{base64.b64encode(await generate_edge_tts_audio(ai_reply)).decode('utf-8')}" if ai_reply else None
-    }
-
-# --- API SISANYA TETAP SAMA ---
-# (Search, Reviews, Payment, midtrans, etc tetap di bawah ini)
+    return {"mentor": mentor['name'], "reply": ai_reply, "job_id": job_id}
 
 # --- API LAINNYA (SAMA SEPERTI SEBELUMNYA) ---
 @app.get("/mentors/search")

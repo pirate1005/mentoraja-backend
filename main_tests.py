@@ -249,7 +249,7 @@ async def chat_with_mentor(request: ChatRequest):
     BAHASA: Indonesia (Natural & Conversational).
 
     [MATERI MENTORING / KNOWLEDGE BASE]
-    {knowledge_base[:20000]} 
+    {knowledge_base[:4000]} 
     
     ==================================================
     [INSTRUKSI KHUSUS BERDASARKAN STATUS CHAT SAAT INI]
